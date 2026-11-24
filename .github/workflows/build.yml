@@ -1,0 +1,1115 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle 8.5
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+
+      - name: Generate project files
+        run: |
+          mkdir -p app/src/main/java/com/example/looptimer
+          mkdir -p app/src/main/res/values
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "LoopTimer"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.2.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+          }
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.example.looptimer"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.example.looptimer"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+
+              buildFeatures {
+                  compose = true
+              }
+
+              composeOptions {
+                  kotlinCompilerExtensionVersion = "1.5.8"
+              }
+          }
+
+          dependencies {
+              implementation("androidx.core:core-ktx:1.12.0")
+              implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+              implementation("androidx.activity:activity-compose:1.8.2")
+              implementation(platform("androidx.compose:compose-bom:2024.02.00"))
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.ui:ui-graphics")
+              implementation("androidx.compose.ui:ui-tooling-preview")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.compose.material:material-icons-core")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+              debugImplementation("androidx.compose.ui:ui-tooling")
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.VIBRATE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@android:drawable/sym_def_app_icon"
+                  android:label="循环提醒"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.LoopTimer">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:label="循环提醒">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".TimerService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="Interval timer and countdown reminder" />
+                  </service>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/res/values/themes.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="Theme.LoopTimer" parent="android:Theme.Material.Light.NoActionBar" />
+          </resources>
+          EOF
+
+          cat > app/src/main/java/com/example/looptimer/Store.kt <<'EOF'
+          package com.example.looptimer
+
+          import android.content.Context
+          import org.json.JSONArray
+          import org.json.JSONObject
+
+          data class Stage(val name: String, val minutes: Int)
+          data class Todo(val id: Long, val text: String, val done: Boolean)
+
+          object Store {
+              private const val PREF = "loop_timer"
+              private const val K_STAGES = "stages"
+              private const val K_LOOP = "loop"
+              private const val K_MODE = "mode"
+              private const val K_FREE = "free_minutes"
+              private const val K_TODOS = "todos"
+
+              private fun sp(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+
+              fun loadStages(ctx: Context): List<Stage> {
+                  val raw = sp(ctx).getString(K_STAGES, null) ?: return defaultStages()
+                  return try {
+                      val arr = JSONArray(raw)
+                      List(arr.length()) { i ->
+                          val o = arr.getJSONObject(i)
+                          Stage(o.optString("name", "阶段"), o.optInt("minutes", 5).coerceIn(1, 999))
+                      }
+                  } catch (e: Exception) {
+                      defaultStages()
+                  }
+              }
+
+              fun saveStages(ctx: Context, list: List<Stage>) {
+                  val arr = JSONArray()
+                  list.forEach {
+                      arr.put(JSONObject().put("name", it.name).put("minutes", it.minutes))
+                  }
+                  sp(ctx).edit().putString(K_STAGES, arr.toString()).apply()
+              }
+
+              private fun defaultStages() = listOf(Stage("工作", 30), Stage("休息", 5))
+
+              fun loadLoop(ctx: Context) = sp(ctx).getBoolean(K_LOOP, true)
+              fun saveLoop(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean(K_LOOP, v).apply()
+
+              fun loadMode(ctx: Context) = sp(ctx).getInt(K_MODE, 0)
+              fun saveMode(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_MODE, v).apply()
+
+              fun loadFree(ctx: Context) = sp(ctx).getInt(K_FREE, 25)
+              fun saveFree(ctx: Context, v: Int) = sp(ctx).edit().putInt(K_FREE, v).apply()
+
+              fun loadTodos(ctx: Context): List<Todo> {
+                  val raw = sp(ctx).getString(K_TODOS, null) ?: return emptyList()
+                  return try {
+                      val arr = JSONArray(raw)
+                      List(arr.length()) { i ->
+                          val o = arr.getJSONObject(i)
+                          Todo(o.optLong("id"), o.optString("text"), o.optBoolean("done"))
+                      }
+                  } catch (e: Exception) {
+                      emptyList()
+                  }
+              }
+
+              fun saveTodos(ctx: Context, list: List<Todo>) {
+                  val arr = JSONArray()
+                  list.forEach {
+                      arr.put(JSONObject().put("id", it.id).put("text", it.text).put("done", it.done))
+                  }
+                  sp(ctx).edit().putString(K_TODOS, arr.toString()).apply()
+              }
+          }
+
+          fun formatMs(ms: Long): String {
+              val sec = (ms.coerceAtLeast(0) + 999) / 1000
+              val m = sec / 60
+              val s = sec % 60
+              return "%02d:%02d".format(m, s)
+          }
+          EOF
+
+          cat > app/src/main/java/com/example/looptimer/TimerService.kt <<'EOF'
+          package com.example.looptimer
+
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.PendingIntent
+          import android.app.Service
+          import android.content.Context
+          import android.content.Intent
+          import android.content.pm.ServiceInfo
+          import android.media.AudioAttributes
+          import android.media.Ringtone
+          import android.media.RingtoneManager
+          import android.os.Build
+          import android.os.IBinder
+          import android.os.VibrationEffect
+          import android.os.Vibrator
+          import android.os.VibratorManager
+          import androidx.core.app.NotificationCompat
+          import androidx.core.app.NotificationManagerCompat
+          import androidx.core.content.ContextCompat
+          import kotlinx.coroutines.CoroutineScope
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.Job
+          import kotlinx.coroutines.SupervisorJob
+          import kotlinx.coroutines.cancel
+          import kotlinx.coroutines.delay
+          import kotlinx.coroutines.flow.MutableStateFlow
+          import kotlinx.coroutines.flow.asStateFlow
+          import kotlinx.coroutines.isActive
+          import kotlinx.coroutines.launch
+          import org.json.JSONArray
+          import org.json.JSONObject
+
+          data class TimerUiState(
+              val running: Boolean = false,
+              val paused: Boolean = false,
+              val stageName: String = "",
+              val stageIndex: Int = 0,
+              val stageCount: Int = 0,
+              val remainingMs: Long = 0L,
+              val stageDurationMs: Long = 0L,
+              val loop: Boolean = false,
+              val finished: Boolean = false
+          )
+
+          class TimerService : Service() {
+
+              companion object {
+                  const val ACTION_START = "looptimer.action.START"
+                  const val ACTION_PAUSE = "looptimer.action.PAUSE"
+                  const val ACTION_RESUME = "looptimer.action.RESUME"
+                  const val ACTION_SKIP = "looptimer.action.SKIP"
+                  const val ACTION_STOP = "looptimer.action.STOP"
+
+                  const val EXTRA_STAGES = "extra_stages"
+                  const val EXTRA_LOOP = "extra_loop"
+
+                  private const val CHANNEL_ID = "loop_timer_channel"
+                  private const val ONGOING_ID = 1001
+                  private const val ALARM_ID = 1002
+
+                  private val _state = MutableStateFlow(TimerUiState())
+                  val state = _state.asStateFlow()
+
+                  fun start(ctx: Context, stages: List<Stage>, loop: Boolean) {
+                      val i = Intent(ctx, TimerService::class.java).apply {
+                          action = ACTION_START
+                          putExtra(EXTRA_STAGES, encode(stages))
+                          putExtra(EXTRA_LOOP, loop)
+                      }
+                      ContextCompat.startForegroundService(ctx, i)
+                  }
+
+                  fun pause(ctx: Context) = send(ctx, ACTION_PAUSE)
+                  fun resume(ctx: Context) = send(ctx, ACTION_RESUME)
+                  fun skip(ctx: Context) = send(ctx, ACTION_SKIP)
+                  fun stop(ctx: Context) = send(ctx, ACTION_STOP)
+
+                  private fun send(ctx: Context, action: String) {
+                      ContextCompat.startForegroundService(
+                          ctx, Intent(ctx, TimerService::class.java).setAction(action)
+                      )
+                  }
+
+                  private fun encode(stages: List<Stage>): String {
+                      val arr = JSONArray()
+                      stages.forEach {
+                          arr.put(JSONObject().put("name", it.name).put("minutes", it.minutes))
+                      }
+                      return arr.toString()
+                  }
+
+                  private fun decode(raw: String?): List<Stage> {
+                      if (raw.isNullOrBlank()) return emptyList()
+                      return try {
+                          val arr = JSONArray(raw)
+                          List(arr.length()) { i ->
+                              val o = arr.getJSONObject(i)
+                              Stage(o.optString("name", "阶段"), o.optInt("minutes", 5).coerceIn(1, 999))
+                          }
+                      } catch (e: Exception) {
+                          emptyList()
+                      }
+                  }
+              }
+
+              private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+              private var stages: List<Stage> = emptyList()
+              private var loop: Boolean = false
+              private var index: Int = 0
+
+              private var endTime: Long = 0L
+              private var pausedRemaining: Long = 0L
+              private var paused: Boolean = false
+              private var running: Boolean = false
+
+              private var tickerJob: Job? = null
+              private var ringtone: Ringtone? = null
+              private var lastNotifAt: Long = 0L
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              override fun onCreate() {
+                  super.onCreate()
+                  createChannel()
+              }
+
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                  when (intent?.action) {
+                      ACTION_START -> {
+                          val list = decode(intent.getStringExtra(EXTRA_STAGES))
+                          if (list.isEmpty()) {
+                              stopSelf()
+                              return START_NOT_STICKY
+                          }
+                          stages = list
+                          loop = intent.getBooleanExtra(EXTRA_LOOP, false)
+                          startForegroundCompat()
+                          beginNew()
+                      }
+                      ACTION_PAUSE -> if (running) doPause() else stopSelf()
+                      ACTION_RESUME -> if (running) doResume() else stopSelf()
+                      ACTION_SKIP -> if (running) skipStage() else stopSelf()
+                      ACTION_STOP -> stopEverything()
+                  }
+                  return START_NOT_STICKY
+              }
+
+              override fun onDestroy() {
+                  tickerJob?.cancel()
+                  ringtone?.stop()
+                  ringtone = null
+                  scope.cancel()
+                  super.onDestroy()
+              }
+
+              private fun beginNew() {
+                  running = true
+                  paused = false
+                  index = 0
+                  startStage(0)
+              }
+
+              private fun startStage(i: Int) {
+                  index = i
+                  val duration = (stages.getOrNull(i)?.minutes ?: 1) * 60_000L
+                  endTime = System.currentTimeMillis() + duration
+                  pausedRemaining = duration
+                  paused = false
+                  emitState(duration)
+                  notifyOngoing()
+                  startTicker()
+              }
+
+              private fun doPause() {
+                  if (paused) return
+                  pausedRemaining = (endTime - System.currentTimeMillis()).coerceAtLeast(0)
+                  paused = true
+                  emitState(pausedRemaining)
+                  notifyOngoing()
+              }
+
+              private fun doResume() {
+                  if (!paused) return
+                  endTime = System.currentTimeMillis() + pausedRemaining
+                  paused = false
+                  emitState(pausedRemaining)
+                  notifyOngoing()
+              }
+
+              private fun skipStage() {
+                  val next = index + 1
+                  when {
+                      next < stages.size -> startStage(next)
+                      loop -> startStage(0)
+                      else -> finishAll()
+                  }
+              }
+
+              private fun stageFinished() {
+                  playAlarm()
+                  skipStage()
+              }
+
+              private fun finishAll() {
+                  running = false
+                  paused = false
+                  tickerJob?.cancel()
+                  tickerJob = null
+                  _state.value = TimerUiState(finished = true)
+                  stopForeground(STOP_FOREGROUND_REMOVE)
+                  stopSelf()
+              }
+
+              private fun stopEverything() {
+                  running = false
+                  paused = false
+                  tickerJob?.cancel()
+                  tickerJob = null
+                  ringtone?.stop()
+                  ringtone = null
+                  _state.value = TimerUiState()
+                  NotificationManagerCompat.from(this).cancel(ALARM_ID)
+                  stopForeground(STOP_FOREGROUND_REMOVE)
+                  stopSelf()
+              }
+
+              private fun startTicker() {
+                  if (tickerJob?.isActive == true) return
+                  tickerJob = scope.launch {
+                      while (isActive) {
+                          if (running) {
+                              if (paused) {
+                                  emitState(pausedRemaining)
+                              } else {
+                                  val remaining = (endTime - System.currentTimeMillis()).coerceAtLeast(0)
+                                  if (remaining <= 0) {
+                                      stageFinished()
+                                  } else {
+                                      emitState(remaining)
+                                      maybeUpdateNotif()
+                                  }
+                              }
+                          }
+                          delay(200)
+                      }
+                  }
+              }
+
+              private fun emitState(remaining: Long) {
+                  val st = stages.getOrNull(index)
+                  _state.value = TimerUiState(
+                      running = running,
+                      paused = paused,
+                      stageName = st?.name ?: "",
+                      stageIndex = index,
+                      stageCount = stages.size,
+                      remainingMs = remaining,
+                      stageDurationMs = (st?.minutes ?: 0) * 60_000L,
+                      loop = loop
+                  )
+              }
+
+              private fun playAlarm() {
+                  try {
+                      ringtone?.stop()
+                      val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                          ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                      ringtone = RingtoneManager.getRingtone(applicationContext, uri)?.apply {
+                          audioAttributes = AudioAttributes.Builder()
+                              .setUsage(AudioAttributes.USAGE_ALARM)
+                              .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                              .build()
+                          play()
+                      }
+                      scope.launch {
+                          delay(10_000)
+                          ringtone?.stop()
+                          ringtone = null
+                      }
+                  } catch (t: Throwable) {
+                  }
+                  vibrate()
+                  showAlarmNotification()
+              }
+
+              private fun vibrate() {
+                  try {
+                      val pattern = longArrayOf(0, 500, 300, 500, 300, 500)
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                          val vm = getSystemService(VibratorManager::class.java)
+                          vm?.defaultVibrator?.vibrate(VibrationEffect.createWaveform(pattern, -1))
+                      } else {
+                          @Suppress("DEPRECATION")
+                          val v = getSystemService(Vibrator::class.java)
+                          v?.vibrate(VibrationEffect.createWaveform(pattern, -1))
+                      }
+                  } catch (t: Throwable) {
+                  }
+              }
+
+              private fun showAlarmNotification() {
+                  val pi = contentPendingIntent()
+                  val next = stages.getOrNull(index)
+                  val n = NotificationCompat.Builder(this, CHANNEL_ID)
+                      .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                      .setContentTitle("⏰ 阶段结束")
+                      .setContentText("进入下一阶段：${next?.name ?: "结束"}")
+                      .setContentIntent(pi)
+                      .setAutoCancel(true)
+                      .setPriority(NotificationCompat.PRIORITY_HIGH)
+                      .setSilent(true)
+                      .build()
+                  NotificationManagerCompat.from(this).notify(ALARM_ID, n)
+              }
+
+              private fun createChannel() {
+                  val mgr = getSystemService(NotificationManager::class.java)
+                  if (mgr.getNotificationChannel(CHANNEL_ID) == null) {
+                      val ch = NotificationChannel(
+                          CHANNEL_ID, "计时通知", NotificationManager.IMPORTANCE_LOW
+                      ).apply {
+                          setSound(null, null)
+                          enableVibration(false)
+                          description = "显示当前计时状态"
+                      }
+                      mgr.createNotificationChannel(ch)
+                  }
+              }
+
+              private fun startForegroundCompat() {
+                  val notif = buildOngoingNotification()
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                      startForeground(ONGOING_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                  } else {
+                      startForeground(ONGOING_ID, notif)
+                  }
+              }
+
+              private fun notifyOngoing() {
+                  NotificationManagerCompat.from(this).notify(ONGOING_ID, buildOngoingNotification())
+              }
+
+              private fun maybeUpdateNotif() {
+                  val now = System.currentTimeMillis()
+                  if (now - lastNotifAt >= 900) {
+                      lastNotifAt = now
+                      notifyOngoing()
+                  }
+              }
+
+              private fun contentPendingIntent(): PendingIntent {
+                  val i = Intent(this, MainActivity::class.java).apply {
+                      flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                  }
+                  return PendingIntent.getActivity(
+                      this, 0, i,
+                      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                  )
+              }
+
+              private fun buildOngoingNotification(): Notification {
+                  val stage = stages.getOrNull(index)
+                  val remaining =
+                      if (paused) pausedRemaining
+                      else (endTime - System.currentTimeMillis()).coerceAtLeast(0)
+
+                  val title = when {
+                      paused -> "已暂停 · ${stage?.name ?: ""}"
+                      stage != null -> "${stage.name} · ${formatMs(remaining)}"
+                      else -> "计时"
+                  }
+                  val text = if (stages.isNotEmpty())
+                      "第 ${index + 1}/${stages.size} 段 · ${formatMs(remaining)}"
+                  else "准备中"
+
+                  return NotificationCompat.Builder(this, CHANNEL_ID)
+                      .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                      .setContentTitle(title)
+                      .setContentText(text)
+                      .setContentIntent(contentPendingIntent())
+                      .setOngoing(true)
+                      .setOnlyAlertOnce(true)
+                      .setSilent(true)
+                      .setPriority(NotificationCompat.PRIORITY_LOW)
+                      .setCategory(NotificationCompat.CATEGORY_STOPWATCH)
+                      .build()
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/example/looptimer/MainActivity.kt <<'EOF'
+          @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
+          package com.example.looptimer
+
+          import android.Manifest
+          import android.os.Build
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.rememberLauncherForActivityResult
+          import androidx.activity.compose.setContent
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.foundation.horizontalScroll
+          import androidx.compose.foundation.isSystemInDarkTheme
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.verticalScroll
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.Close
+          import androidx.compose.material.icons.filled.Delete
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.StrokeCap
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.text.font.FontFamily
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.text.style.TextDecoration
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContent {
+                      AppTheme {
+                          Surface(
+                              modifier = Modifier.fillMaxSize(),
+                              color = MaterialTheme.colorScheme.background
+                          ) {
+                              AppRoot()
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun AppTheme(content: @Composable () -> Unit) {
+              val dark = isSystemInDarkTheme()
+              MaterialTheme(
+                  colorScheme = if (dark) darkColorScheme() else lightColorScheme(),
+                  content = content
+              )
+          }
+
+          @Composable
+          fun AppRoot() {
+              var tab by remember { mutableIntStateOf(0) }
+
+              val permLauncher = rememberLauncherForActivityResult(
+                  ActivityResultContracts.RequestPermission()
+              ) { }
+              LaunchedEffect(Unit) {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                      permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                  }
+              }
+
+              Scaffold(
+                  topBar = {
+                      TopAppBar(
+                          title = { Text("循环提醒") },
+                          colors = TopAppBarDefaults.topAppBarColors(
+                              containerColor = MaterialTheme.colorScheme.primaryContainer,
+                              titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                          )
+                      )
+                  }
+              ) { padding ->
+                  Column(Modifier.fillMaxSize().padding(padding)) {
+                      TabRow(selectedTabIndex = tab) {
+                          Tab(
+                              selected = tab == 0,
+                              onClick = { tab = 0 },
+                              text = { Text("计时") }
+                          )
+                          Tab(
+                              selected = tab == 1,
+                              onClick = { tab = 1 },
+                              text = { Text("待办") }
+                          )
+                      }
+                      when (tab) {
+                          0 -> TimerTab()
+                          else -> TodoTab()
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun TimerTab() {
+              val ctx = LocalContext.current
+              val state by TimerService.state.collectAsState()
+
+              var mode by remember { mutableIntStateOf(Store.loadMode(ctx)) }
+              var stages by remember { mutableStateOf(Store.loadStages(ctx)) }
+              var loopEnabled by remember { mutableStateOf(Store.loadLoop(ctx)) }
+              var freeMinutes by remember { mutableIntStateOf(Store.loadFree(ctx)) }
+
+              val running = state.running
+
+              Column(
+                  modifier = Modifier
+                      .fillMaxSize()
+                      .verticalScroll(rememberScrollState())
+                      .padding(16.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally
+              ) {
+                  val previewMs =
+                      if (mode == 0) (stages.firstOrNull()?.minutes ?: 0) * 60_000L
+                      else freeMinutes * 60_000L
+                  val displayMs = if (running) state.remainingMs else previewMs
+                  val totalMs = if (running) state.stageDurationMs else previewMs
+
+                  val title = when {
+                      running -> state.stageName.ifBlank { "计时中" }
+                      mode == 0 -> "准备开始"
+                      else -> "自由计时"
+                  }
+                  val subtitle = when {
+                      !running -> if (mode == 0)
+                          "共 ${stages.size} 个阶段 · 循环${if (loopEnabled) "开" else "关"}"
+                      else "共 ${freeMinutes} 分钟"
+                      state.paused -> "已暂停"
+                      else -> "第 ${state.stageIndex + 1} / ${state.stageCount} 段"
+                  }
+
+                  Spacer(Modifier.height(16.dp))
+                  TimerRing(displayMs, totalMs, title, subtitle)
+                  Spacer(Modifier.height(24.dp))
+
+                  if (!running) {
+                      Button(
+                          onClick = {
+                              val list =
+                                  if (mode == 0) stages else listOf(Stage("自由计时", freeMinutes))
+                              if (list.isNotEmpty()) {
+                                  TimerService.start(ctx, list, mode == 0 && loopEnabled)
+                              }
+                          },
+                          enabled = if (mode == 1) freeMinutes > 0 else stages.isNotEmpty(),
+                          modifier = Modifier.height(52.dp).fillMaxWidth(0.65f)
+                      ) {
+                          Text("开始", fontSize = 18.sp)
+                      }
+                  } else {
+                      Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                          if (state.paused) {
+                              Button(onClick = { TimerService.resume(ctx) }) { Text("继续") }
+                          } else {
+                              Button(onClick = { TimerService.pause(ctx) }) { Text("暂停") }
+                          }
+                          OutlinedButton(onClick = { TimerService.skip(ctx) }) { Text("跳过") }
+                          OutlinedButton(
+                              onClick = { TimerService.stop(ctx) },
+                              colors = ButtonDefaults.outlinedButtonColors(
+                                  contentColor = MaterialTheme.colorScheme.error
+                              )
+                          ) { Text("停止") }
+                      }
+                  }
+
+                  Spacer(Modifier.height(28.dp))
+                  HorizontalDivider()
+                  Spacer(Modifier.height(16.dp))
+
+                  Text(
+                      "设置",
+                      style = MaterialTheme.typography.titleMedium,
+                      modifier = Modifier.align(Alignment.Start)
+                  )
+                  Spacer(Modifier.height(8.dp))
+
+                  Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                      FilterChip(
+                          selected = mode == 0,
+                          onClick = { mode = 0; Store.saveMode(ctx, 0) },
+                          label = { Text("循环模式") },
+                          enabled = !running
+                      )
+                      FilterChip(
+                          selected = mode == 1,
+                          onClick = { mode = 1; Store.saveMode(ctx, 1) },
+                          label = { Text("自由时间") },
+                          enabled = !running
+                      )
+                  }
+
+                  Spacer(Modifier.height(12.dp))
+
+                  if (mode == 0) {
+                      stages.forEachIndexed { i, st ->
+                          StageRow(
+                              stage = st,
+                              enabled = !running,
+                              canDelete = stages.size > 1 && !running,
+                              onChange = { updated ->
+                                  stages = stages.toMutableList().also { it[i] = updated }
+                                  Store.saveStages(ctx, stages)
+                              },
+                              onDelete = {
+                                  stages = stages.toMutableList().also { it.removeAt(i) }
+                                  Store.saveStages(ctx, stages)
+                              }
+                          )
+                      }
+                      TextButton(
+                          onClick = {
+                              stages = stages + Stage("阶段 ${stages.size + 1}", 5)
+                              Store.saveStages(ctx, stages)
+                          },
+                          enabled = !running && stages.size < 10
+                      ) { Text("+ 添加阶段") }
+
+                      Row(
+                          modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                          verticalAlignment = Alignment.CenterVertically
+                      ) {
+                          Text("循环重复", modifier = Modifier.weight(1f))
+                          Switch(
+                              checked = loopEnabled,
+                              onCheckedChange = { loopEnabled = it; Store.saveLoop(ctx, it) },
+                              enabled = !running
+                          )
+                      }
+                  } else {
+                      FreeTimePicker(
+                          minutes = freeMinutes,
+                          enabled = !running,
+                          onChange = { freeMinutes = it; Store.saveFree(ctx, it) }
+                      )
+                  }
+
+                  Spacer(Modifier.height(24.dp))
+              }
+          }
+
+          @Composable
+          fun TimerRing(remainingMs: Long, totalMs: Long, title: String, subtitle: String) {
+              val progress =
+                  if (totalMs > 0) (remainingMs.toFloat() / totalMs).coerceIn(0f, 1f) else 0f
+
+              Box(modifier = Modifier.size(250.dp), contentAlignment = Alignment.Center) {
+                  CircularProgressIndicator(
+                      progress = { progress },
+                      modifier = Modifier.fillMaxSize(),
+                      strokeWidth = 10.dp,
+                      strokeCap = StrokeCap.Round,
+                      trackColor = MaterialTheme.colorScheme.surfaceVariant
+                  )
+                  Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                      Text(
+                          text = formatMs(remainingMs),
+                          fontSize = 46.sp,
+                          fontFamily = FontFamily.Monospace,
+                          fontWeight = FontWeight.Bold
+                      )
+                      Spacer(Modifier.height(6.dp))
+                      Text(title, style = MaterialTheme.typography.titleMedium)
+                      Spacer(Modifier.height(2.dp))
+                      Text(
+                          subtitle,
+                          style = MaterialTheme.typography.bodySmall,
+                          color = MaterialTheme.colorScheme.onSurfaceVariant
+                      )
+                  }
+              }
+          }
+
+          @Composable
+          fun StageRow(
+              stage: Stage,
+              enabled: Boolean,
+              canDelete: Boolean,
+              onChange: (Stage) -> Unit,
+              onDelete: () -> Unit
+          ) {
+              Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                  Column(Modifier.padding(12.dp)) {
+                      OutlinedTextField(
+                          value = stage.name,
+                          onValueChange = { onChange(stage.copy(name = it)) },
+                          label = { Text("阶段名称") },
+                          singleLine = true,
+                          enabled = enabled,
+                          modifier = Modifier.fillMaxWidth()
+                      )
+                      Spacer(Modifier.height(6.dp))
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                          Text("时长", modifier = Modifier.weight(1f))
+                          IconButton(
+                              onClick = {
+                                  onChange(stage.copy(minutes = (stage.minutes - 1).coerceAtLeast(1)))
+                              },
+                              enabled = enabled && stage.minutes > 1
+                          ) { Text("−", fontSize = 22.sp) }
+                          Text(
+                              "${stage.minutes} 分",
+                              modifier = Modifier.widthIn(min = 66.dp),
+                              textAlign = TextAlign.Center,
+                              style = MaterialTheme.typography.titleMedium
+                          )
+                          IconButton(
+                              onClick = {
+                                  onChange(stage.copy(minutes = (stage.minutes + 1).coerceAtMost(999)))
+                              },
+                              enabled = enabled && stage.minutes < 999
+                          ) { Text("+", fontSize = 22.sp) }
+                          IconButton(onClick = onDelete, enabled = canDelete) {
+                              Icon(Icons.Default.Delete, contentDescription = "删除阶段")
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun FreeTimePicker(minutes: Int, enabled: Boolean, onChange: (Int) -> Unit) {
+              Card(Modifier.fillMaxWidth()) {
+                  Column(Modifier.padding(16.dp)) {
+                      Text("计时时长", style = MaterialTheme.typography.titleSmall)
+                      Spacer(Modifier.height(8.dp))
+                      Row(
+                          modifier = Modifier.fillMaxWidth(),
+                          verticalAlignment = Alignment.CenterVertically,
+                          horizontalArrangement = Arrangement.Center
+                      ) {
+                          IconButton(
+                              onClick = { onChange((minutes - 5).coerceAtLeast(1)) },
+                              enabled = enabled && minutes > 1
+                          ) { Text("−5", fontSize = 14.sp) }
+                          IconButton(
+                              onClick = { onChange((minutes - 1).coerceAtLeast(1)) },
+                              enabled = enabled && minutes > 1
+                          ) { Text("−", fontSize = 22.sp) }
+                          Text(
+                              "$minutes 分",
+                              modifier = Modifier.widthIn(min = 100.dp),
+                              textAlign = TextAlign.Center,
+                              style = MaterialTheme.typography.headlineSmall
+                          )
+                          IconButton(
+                              onClick = { onChange((minutes + 1).coerceAtMost(999)) },
+                              enabled = enabled && minutes < 999
+                          ) { Text("+", fontSize = 22.sp) }
+                          IconButton(
+                              onClick = { onChange((minutes + 5).coerceAtMost(999)) },
+                              enabled = enabled && minutes < 999
+                          ) { Text("+5", fontSize = 14.sp) }
+                      }
+                      Spacer(Modifier.height(8.dp))
+                      Row(
+                          modifier = Modifier
+                              .fillMaxWidth()
+                              .horizontalScroll(rememberScrollState()),
+                          horizontalArrangement = Arrangement.spacedBy(8.dp)
+                      ) {
+                          listOf(5, 10, 15, 25, 45, 60).forEach { m ->
+                              AssistChip(
+                                  onClick = { onChange(m) },
+                                  label = { Text("$m 分") },
+                                  enabled = enabled
+                              )
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun TodoTab() {
+              val ctx = LocalContext.current
+              var todos by remember { mutableStateOf(Store.loadTodos(ctx)) }
+              var input by remember { mutableStateOf("") }
+
+              fun update(list: List<Todo>) {
+                  todos = list
+                  Store.saveTodos(ctx, list)
+              }
+
+              Column(Modifier.fillMaxSize().padding(16.dp)) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                      OutlinedTextField(
+                          value = input,
+                          onValueChange = { input = it },
+                          modifier = Modifier.weight(1f),
+                          placeholder = { Text("添加待办事项…") },
+                          singleLine = true
+                      )
+                      Spacer(Modifier.width(8.dp))
+                      Button(
+                          onClick = {
+                              val t = input.trim()
+                              if (t.isNotEmpty()) {
+                                  update(todos + Todo(System.currentTimeMillis(), t, false))
+                                  input = ""
+                              }
+                          }
+                      ) { Text("添加") }
+                  }
+
+                  Spacer(Modifier.height(12.dp))
+
+                  if (todos.isEmpty()) {
+                      Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                          Text(
+                              "暂无待办，添加一条吧",
+                              color = MaterialTheme.colorScheme.onSurfaceVariant
+                          )
+                      }
+                  } else {
+                      LazyColumn(Modifier.weight(1f)) {
+                          items(todos, key = { it.id }) { todo ->
+                              Row(
+                                  modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                  verticalAlignment = Alignment.CenterVertically
+                              ) {
+                                  Checkbox(
+                                      checked = todo.done,
+                                      onCheckedChange = { checked ->
+                                          update(
+                                              todos.map {
+                                                  if (it.id == todo.id) it.copy(done = checked) else it
+                                              }
+                                          )
+                                      }
+                                  )
+                                  Text(
+                                      todo.text,
+                                      modifier = Modifier.weight(1f),
+                                      textDecoration =
+                                          if (todo.done) TextDecoration.LineThrough else null,
+                                      color =
+                                          if (todo.done) MaterialTheme.colorScheme.onSurfaceVariant
+                                          else MaterialTheme.colorScheme.onSurface
+                                  )
+                                  IconButton(
+                                      onClick = { update(todos.filterNot { it.id == todo.id }) }
+                                  ) {
+                                      Icon(Icons.Default.Close, contentDescription = "删除")
+                                  }
+                              }
+                          }
+                      }
+                      if (todos.any { it.done }) {
+                          TextButton(onClick = { update(todos.filterNot { it.done }) }) {
+                              Text("清除已完成")
+                          }
+                      }
+                  }
+              }
+          }
+          EOF
+
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk LoopTimer.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LoopTimer-apk
+          path: LoopTimer.apk
