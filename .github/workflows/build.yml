@@ -27,6 +27,13 @@ jobs:
           mkdir -p app/src/main/java/com/example/looptimer
           mkdir -p app/src/main/res/values
 
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
+          android.enableJetifier=true
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          kotlin.code.style=official
+          EOF
+
           cat > settings.gradle.kts <<'EOF'
           pluginManagement {
               repositories {
