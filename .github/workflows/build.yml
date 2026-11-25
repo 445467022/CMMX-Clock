@@ -59,8 +59,8 @@ jobs:
                   applicationId = "com.example.looptimer"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 3
-                  versionName = "3.0"
+                  versionCode = 4
+                  versionName = "4.0"
               }
               buildTypes { release { isMinifyEnabled = false } }
               compileOptions {
@@ -212,18 +212,11 @@ jobs:
               fun loadDayEnd(c: Context) = sp(c).getInt("day_end", 18 * 60)
               fun saveDayEnd(c: Context, v: Int) = sp(c).edit().putInt("day_end", v).apply()
 
+              fun loadScheduleStart(c: Context) = sp(c).getInt("schedule_start", 8 * 60)
+              fun saveScheduleStart(c: Context, v: Int) = sp(c).edit().putInt("schedule_start", v).apply()
+
               fun loadTasks(c: Context): List<Task> {
-                  val raw = sp(c).getString("tasks", null)
-                  if (raw == null) {
-                      val legacy = sp(c).getString("todos", null) ?: return emptyList()
-                      return try {
-                          val a = JSONArray(legacy)
-                          List(a.length()) { i ->
-                              val o = a.getJSONObject(i)
-                              Task(o.optLong("id"), o.optString("text"), o.optBoolean("done"), o.optLong("remindAt", 0L))
-                          }
-                      } catch (e: Exception) { emptyList() }
-                  }
+                  val raw = sp(c).getString("tasks", null) ?: return emptyList()
                   return try {
                       val a = JSONArray(raw)
                       List(a.length()) { i ->
@@ -248,6 +241,7 @@ jobs:
               return "%02d:%02d".format(sec / 60, sec % 60)
           }
           fun formatHm(min: Int): String = "%02d:%02d".format(min / 60, min % 60)
+
           fun parseHm(s: String): Int? {
               val parts = s.trim().split(":")
               if (parts.size != 2) return null
@@ -255,6 +249,28 @@ jobs:
               val m = parts[1].toIntOrNull() ?: return null
               if (h !in 0..23 || m !in 0..59) return null
               return h * 60 + m
+          }
+
+          /** 用户输入 4 位数字自动变成 "HH:MM" */
+          fun autoFormatTime(input: String): String {
+              val digits = input.filter { it.isDigit() }.take(4)
+              val sb = StringBuilder()
+              for (i in digits.indices) {
+                  if (i == 2) sb.append(':')
+                  sb.append(digits[i])
+              }
+              return sb.toString()
+          }
+
+          /** 用户输入 8 位数字自动变成 "yyyy-MM-dd" */
+          fun autoFormatDate(input: String): String {
+              val digits = input.filter { it.isDigit() }.take(8)
+              val sb = StringBuilder()
+              for (i in digits.indices) {
+                  if (i == 4 || i == 6) sb.append('-')
+                  sb.append(digits[i])
+              }
+              return sb.toString()
           }
           ST_EOF
 
@@ -486,9 +502,9 @@ jobs:
                   const val ACTION_DAILY_START = "looptimer.action.DAILY_START"
 
                   fun scheduleNext(ctx: Context) {
-                      val dayStart = Store.loadDayStart(ctx)
-                      val hour = dayStart / 60
-                      val minute = dayStart % 60
+                      val startMin = Store.loadScheduleStart(ctx)
+                      val hour = startMin / 60
+                      val minute = startMin % 60
                       val cal = Calendar.getInstance().apply {
                           set(Calendar.HOUR_OF_DAY, hour)
                           set(Calendar.MINUTE, minute)
@@ -568,6 +584,7 @@ jobs:
           import kotlinx.coroutines.flow.asStateFlow
           import org.json.JSONArray
           import org.json.JSONObject
+          import java.time.LocalTime
 
           data class TimerUiState(
               val running: Boolean = false,
@@ -668,8 +685,7 @@ jobs:
                           stages = list
                           loop = intent.getBooleanExtra(EXTRA_LOOP, false)
                           startForegroundCompat()
-                          running = true; paused = false; index = 0
-                          startStage(0)
+                          startNewSession()
                       }
                       A_PAUSE -> if (running) doPause() else stopSelf()
                       A_RESUME -> if (running) doResume() else stopSelf()
@@ -685,9 +701,37 @@ jobs:
                   super.onDestroy()
               }
 
-              private fun startStage(i: Int) {
+              /** 智能开始：如果表单带时间段，跳到当前时间所在的阶段并扣掉已过时间 */
+              private fun startNewSession() {
+                  running = true
+                  paused = false
+                  if (stages.any { it.startMin >= 0 }) {
+                      val nowMin = LocalTime.now().let { it.hour * 60 + it.minute }
+                      var idx = -1
+                      var elapsedMs = 0L
+                      for (i in stages.indices) {
+                          val s = stages[i]
+                          if (s.startMin < 0) continue
+                          if (nowMin >= s.startMin && nowMin < s.startMin + s.minutes) {
+                              idx = i
+                              elapsedMs = (nowMin - s.startMin) * 60_000L
+                              break
+                          }
+                      }
+                      if (idx < 0) {
+                          idx = 0
+                          elapsedMs = 0L
+                      }
+                      startStage(idx, elapsedMs)
+                  } else {
+                      startStage(0, 0L)
+                  }
+              }
+
+              private fun startStage(i: Int, elapsedMs: Long = 0L) {
                   index = i
-                  val dur = (stages.getOrNull(i)?.minutes ?: 1) * 60_000L
+                  val totalDur = (stages.getOrNull(i)?.minutes ?: 1) * 60_000L
+                  val dur = (totalDur - elapsedMs).coerceAtLeast(1_000L)
                   endTime = System.currentTimeMillis() + dur
                   pausedRemaining = dur
                   paused = false
@@ -708,8 +752,8 @@ jobs:
               private fun skip() {
                   val n = index + 1
                   when {
-                      n < stages.size -> startStage(n)
-                      loop -> startStage(0)
+                      n < stages.size -> startStage(n, 0L)
+                      loop -> startStage(0, 0L)
                       else -> finishAll()
                   }
               }
@@ -762,7 +806,6 @@ jobs:
               }
 
               private fun playAlarm() {
-                  // 播放铃声
                   if (soundEnabled && ringtoneType != 2) {
                       try {
                           ringtone?.stop()
@@ -787,7 +830,6 @@ jobs:
                           }
                       } catch (e: Exception) {}
                   }
-                  // 震动
                   if (vibrateEnabled) {
                       try {
                           val pattern = longArrayOf(0, 500, 300, 500, 300, 500)
@@ -801,7 +843,6 @@ jobs:
                           }
                       } catch (e: Exception) {}
                   }
-                  // 显示可停止的通知
                   showRingNotification()
               }
 
@@ -919,6 +960,7 @@ jobs:
           import androidx.compose.foundation.rememberScrollState
           import androidx.compose.foundation.shape.CircleShape
           import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.text.KeyboardOptions
           import androidx.compose.foundation.verticalScroll
           import androidx.compose.material.icons.Icons
           import androidx.compose.material.icons.filled.Close
@@ -933,6 +975,7 @@ jobs:
           import androidx.compose.ui.platform.LocalContext
           import androidx.compose.ui.text.font.FontFamily
           import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.input.KeyboardType
           import androidx.compose.ui.text.style.TextAlign
           import androidx.compose.ui.text.style.TextDecoration
           import androidx.compose.ui.unit.dp
@@ -1013,14 +1056,13 @@ jobs:
               var vibrateOn by remember { mutableStateOf(Store.loadVibrate(ctx)) }
               var ringtoneType by remember { mutableIntStateOf(Store.loadRingtoneType(ctx)) }
               var ringDuration by remember { mutableIntStateOf(Store.loadRingDuration(ctx)) }
-              var dayStart by remember { mutableIntStateOf(Store.loadDayStart(ctx)) }
-              var dayEnd by remember { mutableIntStateOf(Store.loadDayEnd(ctx)) }
               var scheduleEnabled by remember { mutableStateOf(Store.loadScheduleEnabled(ctx)) }
+              var scheduleStartText by remember { mutableStateOf(formatHm(Store.loadScheduleStart(ctx))) }
               var workMin by remember { mutableIntStateOf(30) }
               var restMin by remember { mutableIntStateOf(5) }
               var showSchedulePanel by remember { mutableStateOf(false) }
-              var dayStartText by remember { mutableStateOf(formatHm(dayStart)) }
-              var dayEndText by remember { mutableStateOf(formatHm(dayEnd)) }
+              var dayStartText by remember { mutableStateOf(formatHm(Store.loadDayStart(ctx))) }
+              var dayEndText by remember { mutableStateOf(formatHm(Store.loadDayEnd(ctx))) }
 
               val running = state.running
               Column(
@@ -1054,6 +1096,15 @@ jobs:
                           enabled = if (mode == 1) freeMinutes > 0 else stages.isNotEmpty(),
                           modifier = Modifier.height(52.dp).fillMaxWidth(0.65f)
                       ) { Text("开始", fontSize = 18.sp) }
+                      if (mode == 0 && stages.any { it.startMin >= 0 }) {
+                          val nowMin = LocalTime.now().let { it.hour * 60 + it.minute }
+                          val current = stages.firstOrNull { nowMin >= it.startMin && it.startMin >= 0 && nowMin < it.startMin + it.minutes }
+                          if (current != null) {
+                              Text("将自动跳到当前时段：${current.name} ${current.key()}",
+                                  style = MaterialTheme.typography.bodySmall,
+                                  color = MaterialTheme.colorScheme.primary)
+                          }
+                      }
                   } else {
                       Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                           if (state.paused) Button({ TimerService.resume(ctx) }) { Text("继续") }
@@ -1122,13 +1173,12 @@ jobs:
                           SchedulePanel(
                               dayStartText = dayStartText, dayEndText = dayEndText,
                               workMin = workMin, restMin = restMin, enabled = !running,
-                              onDayStartText = { dayStartText = it },
-                              onDayEndText = { dayEndText = it },
+                              onDayStartText = { dayStartText = autoFormatTime(it) },
+                              onDayEndText = { dayEndText = autoFormatTime(it) },
                               onWork = { workMin = it }, onRest = { restMin = it },
                               onGenerate = {
                                   val s = parseHm(dayStartText); val e = parseHm(dayEndText)
                                   if (s != null && e != null && s < e) {
-                                      dayStart = s; dayEnd = e
                                       Store.saveDayStart(ctx, s); Store.saveDayEnd(ctx, e)
                                       val gen = generateSchedule(s, e, workMin, restMin)
                                       if (gen.isNotEmpty()) { stages = gen; Store.saveStages(ctx, gen) }
@@ -1146,7 +1196,30 @@ jobs:
                           })
                       }
                       if (scheduleEnabled) {
-                          Text("每天 ${formatHm(dayStart)} 自动开始循环表单", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                          Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                              Text("每天开始时间", modifier = Modifier.weight(1f))
+                              OutlinedTextField(
+                                  value = scheduleStartText,
+                                  onValueChange = {
+                                      scheduleStartText = autoFormatTime(it)
+                                      parseHm(scheduleStartText)?.let { m -> Store.saveScheduleStart(ctx, m) }
+                                  },
+                                  singleLine = true,
+                                  keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                  modifier = Modifier.width(120.dp)
+                              )
+                          }
+                          LaunchedEffect(scheduleStartText) {
+                              parseHm(scheduleStartText)?.let { m ->
+                                  if (Store.loadScheduleStart(ctx) != m) {
+                                      Store.saveScheduleStart(ctx, m)
+                                      if (scheduleEnabled) ScheduleReceiver.scheduleNext(ctx)
+                                  }
+                              }
+                          }
+                          Text("提示：每天 ${scheduleStartText} 自动启动循环表单",
+                              style = MaterialTheme.typography.bodySmall,
+                              color = MaterialTheme.colorScheme.onSurfaceVariant)
                       }
                   } else {
                       FreeTimePicker(freeMinutes, !running) { freeMinutes = it; Store.saveFree(ctx, it) }
@@ -1180,15 +1253,25 @@ jobs:
           ) {
               Card(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                   Column(Modifier.padding(12.dp)) {
-                      Text("时间段（手动输入 HH:mm）", style = MaterialTheme.typography.titleSmall)
+                      Text("时间段（只输数字，冒号自动补）", style = MaterialTheme.typography.titleSmall)
                       Row(verticalAlignment = Alignment.CenterVertically) {
                           Text("开始", modifier = Modifier.width(56.dp))
-                          OutlinedTextField(dayStartText, onDayStartText, Modifier.weight(1f), singleLine = true, enabled = enabled)
+                          OutlinedTextField(
+                              dayStartText, { onDayStartText(it) }, Modifier.weight(1f),
+                              singleLine = true, enabled = enabled,
+                              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                              placeholder = { Text("0800") }
+                          )
                       }
                       Spacer(Modifier.height(4.dp))
                       Row(verticalAlignment = Alignment.CenterVertically) {
                           Text("结束", modifier = Modifier.width(56.dp))
-                          OutlinedTextField(dayEndText, onDayEndText, Modifier.weight(1f), singleLine = true, enabled = enabled)
+                          OutlinedTextField(
+                              dayEndText, { onDayEndText(it) }, Modifier.weight(1f),
+                              singleLine = true, enabled = enabled,
+                              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                              placeholder = { Text("1800") }
+                          )
                       }
                       Spacer(Modifier.height(6.dp))
                       Stepper("工作时长", workMin, 1, 240, enabled, onWork, "$workMin 分", 5)
@@ -1277,7 +1360,7 @@ jobs:
               }
           }
 
-          // ================================================================ 待办（= 日历事件的列表视图）
+          // ================================================================ 待办
           @Composable
           fun TodoTab() {
               val ctx = LocalContext.current
@@ -1382,28 +1465,34 @@ jobs:
                   onDismissRequest = onDismiss,
                   title = { Text("编辑任务") },
                   text = {
-                      Column {
+                      Column(Modifier.verticalScroll(rememberScrollState())) {
                           OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                           Spacer(Modifier.height(6.dp))
                           OutlinedTextField(note, { note = it }, label = { Text("备注") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                           Spacer(Modifier.height(8.dp))
-                          Text("提醒时间（手动输入）", style = MaterialTheme.typography.bodySmall)
-                          OutlinedTextField(dateText, { dateText = it }, label = { Text("日期 yyyy-MM-dd") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                          Text("提醒时间（只输数字，自动补全）", style = MaterialTheme.typography.bodySmall)
+                          OutlinedTextField(
+                              dateText, { dateText = autoFormatDate(it) },
+                              label = { Text("日期") }, singleLine = true,
+                              modifier = Modifier.fillMaxWidth(),
+                              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                              placeholder = { Text("20250115") }
+                          )
                           Spacer(Modifier.height(4.dp))
-                          OutlinedTextField(timeText, { timeText = it }, label = { Text("时间 HH:mm") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                          OutlinedTextField(
+                              timeText, { timeText = autoFormatTime(it) },
+                              label = { Text("时间") }, singleLine = true,
+                              modifier = Modifier.fillMaxWidth(),
+                              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                              placeholder = { Text("0930") }
+                          )
                           if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                           Spacer(Modifier.height(10.dp))
-                          Text("关联阶段（计时进入该阶段时提醒）", style = MaterialTheme.typography.bodySmall)
-                          if (stages.isEmpty()) {
-                              Text("请先在计时 Tab 生成循环表单", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                          Text("关联阶段（下拉选择，计时到该阶段时提醒）", style = MaterialTheme.typography.bodySmall)
+                          if (stages.none { it.startMin >= 0 }) {
+                              Text("请先在计时 Tab 生成带时间段的表单", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                           } else {
-                              Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                  FilterChip(stageKey.isEmpty(), { stageKey = "" }, label = { Text("无") })
-                                  stages.filter { it.startMin >= 0 }.forEach { st ->
-                                      val k = st.key()
-                                      FilterChip(stageKey == k, { stageKey = k }, label = { Text("${st.name} $k") })
-                                  }
-                              }
+                              StageDropdown(stages, stageKey) { stageKey = it }
                           }
                       }
                   },
@@ -1431,6 +1520,35 @@ jobs:
               )
           }
 
+          @Composable
+          fun StageDropdown(stages: List<Stage>, selected: String, onSelect: (String) -> Unit) {
+              var expanded by remember { mutableStateOf(false) }
+              val options = listOf("" to "无") + stages.filter { it.startMin >= 0 }.map { it.key() to "${it.name}  ${it.key()}" }
+              val currentLabel = options.firstOrNull { it.first == selected }?.second ?: "无"
+
+              ExposedDropdownMenuBox(
+                  expanded = expanded,
+                  onExpandedChange = { expanded = it }
+              ) {
+                  OutlinedTextField(
+                      value = currentLabel,
+                      onValueChange = {},
+                      readOnly = true,
+                      label = { Text("关联阶段") },
+                      trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                      modifier = Modifier.menuAnchor().fillMaxWidth()
+                  )
+                  ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                      options.forEach { (key, label) ->
+                          DropdownMenuItem(
+                              text = { Text(label) },
+                              onClick = { onSelect(key); expanded = false }
+                          )
+                      }
+                  }
+              }
+          }
+
           fun scheduleReminder(ctx: Context, id: Int, title: String, timeMs: Long) {
               if (timeMs <= System.currentTimeMillis()) return
               try {
@@ -1448,7 +1566,7 @@ jobs:
               } catch (e: Exception) {}
           }
 
-          // ================================================================ 日历（= 同一批 Task 的日历视图）
+          // ================================================================ 日历
           @Composable
           fun CalendarTab() {
               val ctx = LocalContext.current
@@ -1468,6 +1586,10 @@ jobs:
                       Spacer(Modifier.width(6.dp))
                       FilterChip(viewMode == 2, { viewMode = 2 }, label = { Text("月") })
                       Spacer(Modifier.weight(1f))
+                      TextButton(onClick = {
+                          val today = LocalDate.now()
+                          anchor = today; selected = today
+                      }) { Text("今天") }
                       IconButton({ addForDate = selected }) {
                           Icon(Icons.Default.Notifications, contentDescription = "添加事件")
                       }
@@ -1513,58 +1635,66 @@ jobs:
           }
 
           @Composable
+          fun DayDetails(selected: LocalDate, tasks: List<Task>) {
+              Card(Modifier.fillMaxWidth()) {
+                  Column(Modifier.padding(16.dp)) {
+                      Text(selected.format(DateTimeFormatter.ofPattern("yyyy年MM月dd日 EEEE")), style = MaterialTheme.typography.titleLarge)
+                      Spacer(Modifier.height(4.dp))
+                      Text("农历 " + Lunar.lunarText(selected), color = MaterialTheme.colorScheme.primary)
+                      val h = Lunar.legalHoliday(selected)
+                      val sp = Lunar.specialOf(selected)
+                      if (h != null) Text("🎉 $h", color = MaterialTheme.colorScheme.error)
+                      if (sp != null) Text("✨ $sp", color = MaterialTheme.colorScheme.tertiary)
+                      val wd = selected.dayOfWeek.value
+                      if (wd == 6 || wd == 7) Text("休息日", color = MaterialTheme.colorScheme.secondary)
+                      else Text("工作日", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                  }
+              }
+              Spacer(Modifier.height(12.dp))
+              Text("当日任务与日程", style = MaterialTheme.typography.titleMedium)
+              val dayTasks = tasks.filter {
+                  it.remindAt > 0 &&
+                      java.time.Instant.ofEpochMilli(it.remindAt).atZone(ZoneId.systemDefault()).toLocalDate() == selected
+              }
+              if (dayTasks.isEmpty()) {
+                  Text("暂无事件", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+              } else {
+                  dayTasks.forEach { e -> TaskEventRow(e) }
+              }
+          }
+
+          @Composable
+          fun TaskEventRow(e: Task) {
+              val t = java.time.Instant.ofEpochMilli(e.remindAt).atZone(ZoneId.systemDefault()).toLocalTime()
+              Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                  Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                      Text(t.format(DateTimeFormatter.ofPattern("HH:mm")), Modifier.widthIn(min = 60.dp),
+                          fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                      Text(e.title, modifier = Modifier.weight(1f),
+                          textDecoration = if (e.done) TextDecoration.LineThrough else null)
+                      if (e.stageKey.isNotBlank()) {
+                          Text("🕒 " + e.stageKey, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                      }
+                  }
+              }
+          }
+
+          @Composable
           fun DayView(selected: LocalDate, tasks: List<Task>, onSelect: (LocalDate) -> Unit) {
               Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                  Card(Modifier.fillMaxWidth()) {
-                      Column(Modifier.padding(16.dp)) {
-                          Text(selected.format(DateTimeFormatter.ofPattern("yyyy年MM月dd日 EEEE")), style = MaterialTheme.typography.titleLarge)
-                          Spacer(Modifier.height(4.dp))
-                          Text("农历 " + Lunar.lunarText(selected), color = MaterialTheme.colorScheme.primary)
-                          val h = Lunar.legalHoliday(selected)
-                          val sp = Lunar.specialOf(selected)
-                          if (h != null) Text("🎉 $h", color = MaterialTheme.colorScheme.error)
-                          if (sp != null) Text("✨ $sp", color = MaterialTheme.colorScheme.tertiary)
-                          val wd = selected.dayOfWeek.value
-                          if (wd == 6 || wd == 7) Text("休息日", color = MaterialTheme.colorScheme.secondary)
-                          else Text("工作日", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                      }
-                  }
-                  Spacer(Modifier.height(12.dp))
-                  Text("当日任务与日程", style = MaterialTheme.typography.titleMedium)
-                  val dayTasks = tasks.filter {
-                      if (it.remindAt > 0) {
-                          java.time.Instant.ofEpochMilli(it.remindAt).atZone(ZoneId.systemDefault()).toLocalDate() == selected
-                      } else false
-                  }
-                  if (dayTasks.isEmpty()) {
-                      Text("暂无事件", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
-                  } else {
-                      dayTasks.forEach { e ->
-                          val t = java.time.Instant.ofEpochMilli(e.remindAt).atZone(ZoneId.systemDefault()).toLocalTime()
-                          Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                              Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                  Text(t.format(DateTimeFormatter.ofPattern("HH:mm")), Modifier.widthIn(min = 60.dp),
-                                      fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                  Text(e.title, modifier = Modifier.weight(1f),
-                                      textDecoration = if (e.done) TextDecoration.LineThrough else null)
-                                  if (e.stageKey.isNotBlank()) {
-                                      Text("🕒 " + e.stageKey, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
-                                  }
-                              }
-                          }
-                      }
-                  }
+                  DayDetails(selected, tasks)
                   Spacer(Modifier.height(60.dp))
               }
           }
 
           @Composable
           fun WeekView(anchor: LocalDate, selected: LocalDate, tasks: List<Task>, onSelect: (LocalDate) -> Unit) {
-              val start = anchor.minusDays((anchor.dayOfWeek.value - 1).toLong())
-              Column {
+              val weekStart = anchor.minusDays((anchor.dayOfWeek.value - 1).toLong())
+              val weekEnd = weekStart.plusDays(6)
+              Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                   Row(Modifier.fillMaxWidth()) {
                       for (i in 0..6) {
-                          val d = start.plusDays(i.toLong())
+                          val d = weekStart.plusDays(i.toLong())
                           val isSel = d == selected
                           val bg = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
                           val fg = if (isSel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
@@ -1580,7 +1710,32 @@ jobs:
                       }
                   }
                   Spacer(Modifier.height(12.dp))
-                  DayView(selected, tasks, onSelect)
+                  DayDetails(selected, tasks)
+                  Spacer(Modifier.height(12.dp))
+                  Text("本周全部任务", style = MaterialTheme.typography.titleMedium)
+                  val weekTasks = tasks.filter {
+                      if (it.remindAt <= 0) return@filter false
+                      val d = java.time.Instant.ofEpochMilli(it.remindAt).atZone(ZoneId.systemDefault()).toLocalDate()
+                      !d.isBefore(weekStart) && !d.isAfter(weekEnd)
+                  }.sortedBy { it.remindAt }
+                  if (weekTasks.isEmpty()) {
+                      Text("本周暂无任务", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+                  } else {
+                      weekTasks.forEach { e ->
+                          Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                              Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                  val dt = java.time.Instant.ofEpochMilli(e.remindAt).atZone(ZoneId.systemDefault())
+                                  Text(dt.format(DateTimeFormatter.ofPattern("MM-dd HH:mm")),
+                                      Modifier.widthIn(min = 110.dp),
+                                      fontWeight = FontWeight.Bold,
+                                      color = MaterialTheme.colorScheme.primary)
+                                  Text(e.title, modifier = Modifier.weight(1f),
+                                      textDecoration = if (e.done) TextDecoration.LineThrough else null)
+                              }
+                          }
+                      }
+                  }
+                  Spacer(Modifier.height(60.dp))
               }
           }
 
@@ -1592,7 +1747,7 @@ jobs:
               val daysInMonth = ym.lengthOfMonth()
               val rows = (startOffset + daysInMonth + 6) / 7
 
-              Column {
+              Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                   Row(Modifier.fillMaxWidth()) {
                       listOf("一","二","三","四","五","六","日").forEach {
                           Text(it, Modifier.weight(1f), textAlign = TextAlign.Center,
@@ -1639,7 +1794,34 @@ jobs:
                       }
                   }
                   Spacer(Modifier.height(12.dp))
-                  DayView(selected, tasks, onSelect)
+                  DayDetails(selected, tasks)
+                  Spacer(Modifier.height(12.dp))
+                  Text("本月全部任务", style = MaterialTheme.typography.titleMedium)
+                  val monthStart = ym.atDay(1)
+                  val monthEnd = ym.atEndOfMonth()
+                  val monthTasks = tasks.filter {
+                      if (it.remindAt <= 0) return@filter false
+                      val d = java.time.Instant.ofEpochMilli(it.remindAt).atZone(ZoneId.systemDefault()).toLocalDate()
+                      !d.isBefore(monthStart) && !d.isAfter(monthEnd)
+                  }.sortedBy { it.remindAt }
+                  if (monthTasks.isEmpty()) {
+                      Text("本月暂无任务", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+                  } else {
+                      monthTasks.forEach { e ->
+                          Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                              Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                  val dt = java.time.Instant.ofEpochMilli(e.remindAt).atZone(ZoneId.systemDefault())
+                                  Text(dt.format(DateTimeFormatter.ofPattern("MM-dd HH:mm")),
+                                      Modifier.widthIn(min = 110.dp),
+                                      fontWeight = FontWeight.Bold,
+                                      color = MaterialTheme.colorScheme.primary)
+                                  Text(e.title, modifier = Modifier.weight(1f),
+                                      textDecoration = if (e.done) TextDecoration.LineThrough else null)
+                              }
+                          }
+                      }
+                  }
+                  Spacer(Modifier.height(60.dp))
               }
           }
 
@@ -1649,7 +1831,7 @@ jobs:
           fun AddEventDialog(initialDate: LocalDate, onDismiss: () -> Unit, onConfirm: (String, Long) -> Unit) {
               var title by remember { mutableStateOf("") }
               var dateText by remember { mutableStateOf(initialDate.toString()) }
-              var timeText by remember { mutableStateOf("09:00") }
+              var timeText by remember { mutableStateOf("0900") }
               var error by remember { mutableStateOf("") }
               AlertDialog(
                   onDismissRequest = onDismiss,
@@ -1658,9 +1840,22 @@ jobs:
                       Column {
                           OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                           Spacer(Modifier.height(6.dp))
-                          OutlinedTextField(dateText, { dateText = it }, label = { Text("日期 yyyy-MM-dd") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                          Text("只输数字，符号自动补全", style = MaterialTheme.typography.bodySmall)
+                          OutlinedTextField(
+                              dateText, { dateText = autoFormatDate(it) },
+                              label = { Text("日期") }, singleLine = true,
+                              modifier = Modifier.fillMaxWidth(),
+                              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                              placeholder = { Text("20250115") }
+                          )
                           Spacer(Modifier.height(4.dp))
-                          OutlinedTextField(timeText, { timeText = it }, label = { Text("时间 HH:mm") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                          OutlinedTextField(
+                              timeText, { timeText = autoFormatTime(it) },
+                              label = { Text("时间") }, singleLine = true,
+                              modifier = Modifier.fillMaxWidth(),
+                              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                              placeholder = { Text("0930") }
+                          )
                           if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                       }
                   },
