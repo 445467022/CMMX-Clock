@@ -1019,13 +1019,11 @@ jobs:
           import androidx.compose.ui.text.font.FontWeight
           import androidx.compose.ui.unit.dp
           import androidx.compose.ui.unit.sp
-          import androidx.lifecycle.compose.collectAsStateWithLifecycle
-
           class RingActivity : ComponentActivity() {
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   setContent {
-                      val ui by TimerService.state.collectAsStateWithLifecycle()
+                      val ui by TimerService.state.collectAsState()
                       val ctx = this
                       Surface(Modifier.fillMaxSize(), color = Color(0xFF222222)) {
                           Column(Modifier.fillMaxSize().padding(24.dp),
