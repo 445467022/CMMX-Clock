@@ -57,8 +57,8 @@ jobs:
                   applicationId = "com.example.looptimer"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 7
-                  versionName = "7.0"
+                  versionCode = 8
+                  versionName = "7.1"
               }
               buildTypes { release { isMinifyEnabled = false } }
               compileOptions {
@@ -95,12 +95,7 @@ jobs:
               <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
               <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
               <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-              <application
-                  android:allowBackup="true"
-                  android:icon="@android:drawable/sym_def_app_icon"
-                  android:label="循环提醒"
-                  android:supportsRtl="true"
-                  android:theme="@style/Theme.LoopTimer">
+              <application android:allowBackup="true" android:icon="@android:drawable/sym_def_app_icon" android:label="循环提醒" android:supportsRtl="true" android:theme="@style/Theme.LoopTimer">
                   <activity android:name=".MainActivity" android:exported="true" android:label="循环提醒">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
@@ -108,7 +103,7 @@ jobs:
                       </intent-filter>
                   </activity>
                   <service android:name=".TimerService" android:exported="false" android:foregroundServiceType="specialUse">
-                      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Interval timer and countdown reminder" />
+                      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Interval timer" />
                   </service>
                   <receiver android:name=".ReminderReceiver" android:exported="false" />
                   <receiver android:name=".StageAlarmReceiver" android:exported="false" />
@@ -140,15 +135,7 @@ jobs:
           data class Stage(val name: String, val minutes: Int, val startMin: Int = -1) {
               fun key(): String = if (startMin >= 0) "${formatHm(startMin)}-${formatHm(startMin + minutes)}" else ""
           }
-
-          data class Task(
-              val id: Long,
-              val title: String,
-              val done: Boolean = false,
-              val remindAt: Long = 0L,
-              val stageKey: String = "",
-              val note: String = ""
-          )
+          data class Task(val id: Long, val title: String, val done: Boolean = false, val remindAt: Long = 0L, val stageKey: String = "", val note: String = "")
 
           object Store {
               private const val PREF = "loop_timer"
@@ -210,7 +197,6 @@ jobs:
               fun saveMode(c: Context, v: Int) = sp(c).edit().putInt("mode", v).apply()
               fun loadFree(c: Context) = sp(c).getInt("free", 25)
               fun saveFree(c: Context, v: Int) = sp(c).edit().putInt("free", v).apply()
-
               fun loadSound(c: Context) = sp(c).getBoolean("sound", true)
               fun saveSound(c: Context, v: Boolean) = sp(c).edit().putBoolean("sound", v).apply()
               fun loadVibrate(c: Context) = sp(c).getBoolean("vibrate", true)
@@ -221,7 +207,6 @@ jobs:
               fun saveRingtoneType(c: Context, v: Int) = sp(c).edit().putInt("ringtone_type", v).apply()
               fun loadRingDuration(c: Context) = sp(c).getInt("ring_duration", 30)
               fun saveRingDuration(c: Context, v: Int) = sp(c).edit().putInt("ring_duration", v).apply()
-
               fun loadScheduleEnabled(c: Context) = sp(c).getBoolean("schedule_enabled", false)
               fun saveScheduleEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("schedule_enabled", v).apply()
 
@@ -231,8 +216,7 @@ jobs:
                       val a = JSONArray(raw)
                       List(a.length()) { i ->
                           val o = a.getJSONObject(i)
-                          Task(o.optLong("id"), o.optString("title"), o.optBoolean("done"),
-                              o.optLong("remindAt", 0L), o.optString("stageKey", ""), o.optString("note", ""))
+                          Task(o.optLong("id"), o.optString("title"), o.optBoolean("done"), o.optLong("remindAt", 0L), o.optString("stageKey", ""), o.optString("note", ""))
                       }
                   } catch (e: Exception) { emptyList() }
               }
@@ -411,17 +395,14 @@ jobs:
                   if (l.day == 1) return if (l.month in 1..12) monthNames[l.month - 1] else ""
                   return dayName(l.day)
               }
-
               fun lunarText(date: LocalDate): String {
                   val l = fromSolar(date)
                   return "${l.year}年${monthName(l.month, l.isLeap)}${dayName(l.day)}"
               }
-
               fun workMark(d: LocalDate): String {
                   val wd = d.dayOfWeek.value
-                  val isWeekend = wd == 6 || wd == 7
                   if (legalHoliday(d) != null) return "休"
-                  return if (isWeekend) "休" else "工"
+                  return if (wd == 6 || wd == 7) "休" else "工"
               }
           }
           LU_EOF
@@ -454,9 +435,7 @@ jobs:
                   val channel = "reminder_channel"
                   val mgr = ctx.getSystemService(NotificationManager::class.java)
                   if (mgr.getNotificationChannel(channel) == null) {
-                      mgr.createNotificationChannel(
-                          NotificationChannel(channel, "待办提醒", NotificationManager.IMPORTANCE_HIGH).apply { setSound(null, null) }
-                      )
+                      mgr.createNotificationChannel(NotificationChannel(channel, "待办提醒", NotificationManager.IMPORTANCE_HIGH).apply { setSound(null, null) })
                   }
                   val pi = PendingIntent.getActivity(ctx, id,
                       Intent(ctx, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP },
@@ -464,8 +443,7 @@ jobs:
                   val n = NotificationCompat.Builder(ctx, channel)
                       .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
                       .setContentTitle("⏰ $title").setContentText("时间到了！")
-                      .setContentIntent(pi).setAutoCancel(true)
-                      .setPriority(NotificationCompat.PRIORITY_HIGH).setSilent(true).build()
+                      .setContentIntent(pi).setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_HIGH).setSilent(true).build()
                   if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                       ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
                       NotificationManagerCompat.from(ctx).notify(id, n)
@@ -473,8 +451,7 @@ jobs:
                   try {
                       val type = if (Store.loadRingtoneType(ctx) == 1) RingtoneManager.TYPE_NOTIFICATION else RingtoneManager.TYPE_ALARM
                       RingtoneManager.getRingtone(ctx, RingtoneManager.getDefaultUri(type))?.apply {
-                          audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build()
-                          play()
+                          audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build(); play()
                       }
                   } catch (e: Exception) {}
                   try {
@@ -500,9 +477,7 @@ jobs:
 
           class StageAlarmReceiver : BroadcastReceiver() {
               override fun onReceive(ctx: Context, intent: Intent) {
-                  try {
-                      ContextCompat.startForegroundService(ctx, Intent(ctx, TimerService::class.java).setAction(TimerService.A_FORCE_TICK))
-                  } catch (e: Exception) {}
+                  try { ContextCompat.startForegroundService(ctx, Intent(ctx, TimerService::class.java).setAction(TimerService.A_FORCE_TICK)) } catch (e: Exception) {}
               }
           }
           SA_EOF
@@ -525,29 +500,24 @@ jobs:
                   fun scheduleNext(ctx: Context) {
                       val timed = Store.loadStages(ctx).filter { it.startMin >= 0 }
                       if (timed.isEmpty()) return
-                      val firstStart = timed.minOf { it.startMin }
-                      val lastEnd = timed.maxOf { it.startMin + it.minutes }
-                      setAlarmAt(ctx, firstStart, ACTION_DAILY_START, 100)
-                      setAlarmAt(ctx, lastEnd, ACTION_DAILY_STOP, 101)
+                      setAlarmAt(ctx, timed.minOf { it.startMin }, ACTION_DAILY_START, 100)
+                      setAlarmAt(ctx, timed.maxOf { it.startMin + it.minutes }, ACTION_DAILY_STOP, 101)
                   }
                   fun cancel(ctx: Context) {
                       val am = ctx.getSystemService(AlarmManager::class.java) ?: return
                       listOf(100 to ACTION_DAILY_START, 101 to ACTION_DAILY_STOP).forEach { (id, action) ->
-                          am.cancel(PendingIntent.getBroadcast(ctx, id,
-                              Intent(ctx, ScheduleReceiver::class.java).setAction(action),
+                          am.cancel(PendingIntent.getBroadcast(ctx, id, Intent(ctx, ScheduleReceiver::class.java).setAction(action),
                               PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                       }
                   }
                   private fun setAlarmAt(ctx: Context, minuteOfDay: Int, action: String, reqCode: Int) {
                       val cal = Calendar.getInstance().apply {
-                          set(Calendar.HOUR_OF_DAY, minuteOfDay / 60)
-                          set(Calendar.MINUTE, minuteOfDay % 60)
+                          set(Calendar.HOUR_OF_DAY, minuteOfDay / 60); set(Calendar.MINUTE, minuteOfDay % 60)
                           set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
                           if (timeInMillis <= System.currentTimeMillis() + 5_000) add(Calendar.DAY_OF_YEAR, 1)
                       }
                       val am = ctx.getSystemService(AlarmManager::class.java) ?: return
-                      val pi = PendingIntent.getBroadcast(ctx, reqCode,
-                          Intent(ctx, ScheduleReceiver::class.java).setAction(action),
+                      val pi = PendingIntent.getBroadcast(ctx, reqCode, Intent(ctx, ScheduleReceiver::class.java).setAction(action),
                           PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                       try {
                           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -566,10 +536,7 @@ jobs:
                           }
                           scheduleNext(ctx)
                       }
-                      ACTION_DAILY_STOP -> {
-                          TimerService.stop(ctx)
-                          scheduleNext(ctx)
-                      }
+                      ACTION_DAILY_STOP -> { TimerService.stop(ctx); scheduleNext(ctx) }
                       Intent.ACTION_BOOT_COMPLETED -> if (Store.loadScheduleEnabled(ctx)) scheduleNext(ctx)
                   }
               }
@@ -610,18 +577,10 @@ jobs:
           import java.time.LocalTime
 
           data class TimerUiState(
-              val running: Boolean = false,
-              val paused: Boolean = false,
-              val waiting: Boolean = false,
-              val ringing: Boolean = false,
-              val stageName: String = "",
-              val nextStageName: String = "",
-              val stageIndex: Int = 0,
-              val stageCount: Int = 0,
-              val remainingMs: Long = 0L,
-              val stageDurationMs: Long = 0L,
-              val loop: Boolean = false,
-              val finished: Boolean = false
+              val running: Boolean = false, val paused: Boolean = false, val waiting: Boolean = false,
+              val ringing: Boolean = false, val stageName: String = "", val nextStageName: String = "",
+              val stageIndex: Int = 0, val stageCount: Int = 0, val remainingMs: Long = 0L,
+              val stageDurationMs: Long = 0L, val loop: Boolean = false, val finished: Boolean = false
           )
 
           class TimerService : Service() {
@@ -639,17 +598,13 @@ jobs:
                   private const val RING_CH = "loop_timer_ring_channel"
                   private const val ONGOING_ID = 1001
                   private const val RING_ID = 2003
-
                   private val _state = MutableStateFlow(TimerUiState())
                   val state = _state.asStateFlow()
 
                   fun start(ctx: Context, stages: List<Stage>, loop: Boolean) {
-                      val i = Intent(ctx, TimerService::class.java).apply {
-                          action = A_START
-                          putExtra(EXTRA_STAGES, encode(stages))
-                          putExtra(EXTRA_LOOP, loop)
-                      }
-                      ContextCompat.startForegroundService(ctx, i)
+                      ContextCompat.startForegroundService(ctx, Intent(ctx, TimerService::class.java).apply {
+                          action = A_START; putExtra(EXTRA_STAGES, encode(stages)); putExtra(EXTRA_LOOP, loop)
+                      })
                   }
                   fun pause(ctx: Context) = send(ctx, A_PAUSE)
                   fun resume(ctx: Context) = send(ctx, A_RESUME)
@@ -675,10 +630,9 @@ jobs:
                       } catch (e: Exception) { emptyList() }
                   }
               }
-
               private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
               private var stages: List<Stage> = emptyList()
-              private var loop: Boolean = false
+              private var loop = false
               private var index = 0
               private var endTime: Long = 0L
               private var pausedRemaining: Long = 0L
@@ -699,7 +653,6 @@ jobs:
 
               override fun onBind(intent: Intent?): IBinder? = null
               override fun onCreate() { super.onCreate(); createChannels() }
-
               override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
                   vibrateEnabled = Store.loadVibrate(this)
                   notificationEnabled = Store.loadNotification(this)
@@ -709,10 +662,8 @@ jobs:
                       A_START -> {
                           val list = decode(intent.getStringExtra(EXTRA_STAGES))
                           if (list.isEmpty()) { stopSelf(); return START_NOT_STICKY }
-                          stages = list
-                          loop = intent.getBooleanExtra(EXTRA_LOOP, false)
-                          startForegroundCompat()
-                          startNewSession()
+                          stages = list; loop = intent.getBooleanExtra(EXTRA_LOOP, false)
+                          startForegroundCompat(); startNewSession()
                       }
                       A_PAUSE -> if (running) doPause() else stopSelf()
                       A_RESUME -> if (running) doResume() else stopSelf()
@@ -722,9 +673,7 @@ jobs:
                       A_FORCE_TICK -> {
                           if (running) {
                               if (waiting) {
-                                  if (System.currentTimeMillis() >= nextStartAtMs) {
-                                      waiting = false; cancelStageAlarm(); startStage(pendingIndex, 0L)
-                                  }
+                                  if (System.currentTimeMillis() >= nextStartAtMs) { waiting = false; cancelStageAlarm(); startStage(pendingIndex, 0L) }
                               } else if (!paused) {
                                   val r = (endTime - System.currentTimeMillis()).coerceAtLeast(0)
                                   if (r <= 0) stageFinished()
@@ -734,10 +683,7 @@ jobs:
                   }
                   return START_NOT_STICKY
               }
-
-              override fun onDestroy() {
-                  tickerJob?.cancel(); ringtone?.stop(); scope.cancel(); super.onDestroy()
-              }
+              override fun onDestroy() { tickerJob?.cancel(); ringtone?.stop(); scope.cancel(); super.onDestroy() }
 
               private fun startNewSession() {
                   running = true; paused = false; waiting = false
@@ -747,36 +693,28 @@ jobs:
                       for (i in stages.indices) {
                           val s = stages[i]
                           if (s.startMin < 0) continue
-                          if (nowMin >= s.startMin && nowMin < s.startMin + s.minutes) {
-                              idx = i; elapsedMs = (nowMin - s.startMin) * 60_000L; break
-                          }
+                          if (nowMin >= s.startMin && nowMin < s.startMin + s.minutes) { idx = i; elapsedMs = (nowMin - s.startMin) * 60_000L; break }
                       }
                       if (idx < 0) {
-                          val future = stages.indices.filter { stages[it].startMin >= 0 && stages[it].startMin > nowMin }
-                              .minByOrNull { stages[it].startMin }
-                          if (future != null) startWaiting(future, stages[future])
-                          else startStage(0, 0L)
+                          val future = stages.indices.filter { stages[it].startMin >= 0 && stages[it].startMin > nowMin }.minByOrNull { stages[it].startMin }
+                          if (future != null) startWaiting(future, stages[future]) else startStage(0, 0L)
                       } else startStage(idx, elapsedMs)
                   } else startStage(0, 0L)
               }
-
               private fun startStage(i: Int, elapsedMs: Long = 0L) {
                   index = i
                   val totalDur = (stages.getOrNull(i)?.minutes ?: 1) * 60_000L
                   val dur = (totalDur - elapsedMs).coerceAtLeast(1_000L)
-                  endTime = System.currentTimeMillis() + dur
-                  pausedRemaining = dur
+                  endTime = System.currentTimeMillis() + dur; pausedRemaining = dur
                   paused = false; waiting = false; pendingIndex = -1
                   emitState(dur); notifyOngoing(); startTicker(); setStageAlarm(endTime)
               }
-
               private fun startWaiting(nextIdx: Int, nextStage: Stage) {
                   waiting = true; paused = false; pendingIndex = nextIdx
                   val gap = computeGap(nextStage)
                   nextStartAtMs = System.currentTimeMillis() + gap
                   emitState(gap); notifyOngoing(); setStageAlarm(nextStartAtMs)
               }
-
               private fun computeGap(next: Stage): Long {
                   if (next.startMin < 0) return 0L
                   val now = LocalDateTime.now()
@@ -784,12 +722,10 @@ jobs:
                   if (!target.isAfter(now.plusSeconds(2))) target = target.plusDays(1)
                   return Duration.between(now, target).toMillis().coerceAtLeast(0)
               }
-
               private fun doPause() {
                   if (paused) return
                   if (waiting) {
-                      cancelStageAlarm()
-                      pausedRemaining = (nextStartAtMs - System.currentTimeMillis()).coerceAtLeast(0)
+                      cancelStageAlarm(); pausedRemaining = (nextStartAtMs - System.currentTimeMillis()).coerceAtLeast(0)
                       paused = true; emitState(pausedRemaining); notifyOngoing(); return
                   }
                   pausedRemaining = (endTime - System.currentTimeMillis()).coerceAtLeast(0)
@@ -798,13 +734,8 @@ jobs:
               private fun doResume() {
                   if (!paused) return
                   paused = false
-                  if (waiting) {
-                      nextStartAtMs = System.currentTimeMillis() + pausedRemaining
-                      emitState(pausedRemaining); notifyOngoing(); setStageAlarm(nextStartAtMs)
-                  } else {
-                      endTime = System.currentTimeMillis() + pausedRemaining
-                      emitState(pausedRemaining); notifyOngoing(); setStageAlarm(endTime)
-                  }
+                  if (waiting) { nextStartAtMs = System.currentTimeMillis() + pausedRemaining; emitState(pausedRemaining); notifyOngoing(); setStageAlarm(nextStartAtMs) }
+                  else { endTime = System.currentTimeMillis() + pausedRemaining; emitState(pausedRemaining); notifyOngoing(); setStageAlarm(endTime) }
               }
               private fun skip() {
                   if (waiting) { cancelStageAlarm(); waiting = false; paused = false; startStage(pendingIndex, 0L); return }
@@ -820,24 +751,19 @@ jobs:
                   if (gap > 30_000) startWaiting(nextIdx, next) else startStage(nextIdx, 0L)
               }
               private fun finishAll() {
-                  cancelStageAlarm()
-                  running = false; paused = false; waiting = false
+                  cancelStageAlarm(); running = false; paused = false; waiting = false
                   tickerJob?.cancel(); tickerJob = null
                   _state.value = TimerUiState(finished = true)
                   stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
               }
               private fun stopEverything() {
-                  cancelStageAlarm()
-                  running = false; paused = false; waiting = false
-                  tickerJob?.cancel(); tickerJob = null
-                  stopRingtone()
-                  _state.value = TimerUiState()
-                  stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
+                  cancelStageAlarm(); running = false; paused = false; waiting = false
+                  tickerJob?.cancel(); tickerJob = null; stopRingtone()
+                  _state.value = TimerUiState(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
               }
               private fun setStageAlarm(triggerAt: Long) {
                   val am = getSystemService(AlarmManager::class.java) ?: return
-                  val pi = PendingIntent.getBroadcast(this, 300, Intent(this, StageAlarmReceiver::class.java),
-                      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                  val pi = PendingIntent.getBroadcast(this, 300, Intent(this, StageAlarmReceiver::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                   try {
                       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                           if (am.canScheduleExactAlarms()) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
@@ -847,8 +773,7 @@ jobs:
               }
               private fun cancelStageAlarm() {
                   val am = getSystemService(AlarmManager::class.java) ?: return
-                  val pi = PendingIntent.getBroadcast(this, 300, Intent(this, StageAlarmReceiver::class.java),
-                      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                  val pi = PendingIntent.getBroadcast(this, 300, Intent(this, StageAlarmReceiver::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                   try { am.cancel(pi) } catch (e: Exception) {}
               }
               private fun stopRingtone() {
@@ -887,10 +812,8 @@ jobs:
                   _state.value = _state.value.copy(
                       running = running, paused = paused || waiting, waiting = waiting,
                       stageName = current?.name ?: "", nextStageName = next?.name ?: "",
-                      stageIndex = index, stageCount = stages.size,
-                      remainingMs = remaining,
-                      stageDurationMs = (next ?: current)?.let { it.minutes * 60_000L } ?: 0L,
-                      loop = loop
+                      stageIndex = index, stageCount = stages.size, remainingMs = remaining,
+                      stageDurationMs = (next ?: current)?.let { it.minutes * 60_000L } ?: 0L, loop = loop
                   )
               }
               private fun tasksForStage(key: String): List<Task> {
@@ -931,17 +854,12 @@ jobs:
                   }
                   if (notificationEnabled) showRingNotification()
                   ringStopJob?.cancel()
-                  if (ringDurationSec > 0) {
-                      ringStopJob = scope.launch { delay(ringDurationSec * 1000L); stopRingtone() }
-                  }
+                  if (ringDurationSec > 0) ringStopJob = scope.launch { delay(ringDurationSec * 1000L); stopRingtone() }
               }
               private fun showRingNotification() {
                   val current = stages.getOrNull(index)
-                  val next = if (waiting) stages.getOrNull(pendingIndex)
-                             else stages.getOrNull(index + 1) ?: if (loop) stages.firstOrNull() else null
-                  val stopPi = PendingIntent.getService(this, 202,
-                      Intent(this, TimerService::class.java).setAction(A_STOP_RING),
-                      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                  val next = if (waiting) stages.getOrNull(pendingIndex) else stages.getOrNull(index + 1) ?: if (loop) stages.firstOrNull() else null
+                  val stopPi = PendingIntent.getService(this, 202, Intent(this, TimerService::class.java).setAction(A_STOP_RING), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                   val stageTasks = tasksForStage(current?.key() ?: "")
                   val taskText = if (stageTasks.isNotEmpty()) "\n本阶段任务：" + stageTasks.joinToString("；") { it.title } else ""
                   val n = NotificationCompat.Builder(this, RING_CH)
@@ -949,21 +867,16 @@ jobs:
                       .setContentTitle("⏰ ${current?.name ?: "阶段"} 结束")
                       .setContentText("下一阶段：${next?.name ?: "结束"}$taskText")
                       .setStyle(NotificationCompat.BigTextStyle().bigText("下一阶段：${next?.name ?: "结束"}$taskText"))
-                      .setContentIntent(contentPi())
-                      .setFullScreenIntent(contentPi(), true)
-                      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                      .setCategory(NotificationCompat.CATEGORY_ALARM)
-                      .setAutoCancel(false)
-                      .addAction(android.R.drawable.ic_media_pause, "关闭铃声", stopPi)
+                      .setContentIntent(contentPi()).setFullScreenIntent(contentPi(), true)
+                      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC).setCategory(NotificationCompat.CATEGORY_ALARM)
+                      .setAutoCancel(false).addAction(android.R.drawable.ic_media_pause, "关闭铃声", stopPi)
                       .setPriority(NotificationCompat.PRIORITY_MAX).setSilent(true).setOngoing(true).build()
                   NotificationManagerCompat.from(this).notify(RING_ID, n)
               }
               private fun createChannels() {
                   val mgr = getSystemService(NotificationManager::class.java)
                   if (mgr.getNotificationChannel(CH) == null) {
-                      mgr.createNotificationChannel(NotificationChannel(CH, "计时通知", NotificationManager.IMPORTANCE_LOW).apply {
-                          setSound(null, null); enableVibration(false)
-                      })
+                      mgr.createNotificationChannel(NotificationChannel(CH, "计时通知", NotificationManager.IMPORTANCE_LOW).apply { setSound(null, null); enableVibration(false) })
                   }
                   if (mgr.getNotificationChannel(RING_CH) == null) {
                       mgr.createNotificationChannel(NotificationChannel(RING_CH, "响铃提醒", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -973,9 +886,8 @@ jobs:
               }
               private fun startForegroundCompat() {
                   val n = buildOngoing()
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                      startForeground(ONGOING_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-                  } else startForeground(ONGOING_ID, n)
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) startForeground(ONGOING_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                  else startForeground(ONGOING_ID, n)
               }
               private fun notifyOngoing() { NotificationManagerCompat.from(this).notify(ONGOING_ID, buildOngoing()) }
               private fun maybeUpdateNotif() {
@@ -983,35 +895,21 @@ jobs:
                   if (now - lastNotif >= 900) { lastNotif = now; notifyOngoing() }
               }
               private fun contentPi(): PendingIntent {
-                  val i = Intent(this, MainActivity::class.java).apply {
-                      flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                  }
-                  return PendingIntent.getActivity(this, 0, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                  return PendingIntent.getActivity(this, 0,
+                      Intent(this, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP },
+                      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
               }
               private fun buildOngoing(): Notification {
                   val st = stages.getOrNull(index)
-                  val r = when {
-                      waiting -> (nextStartAtMs - System.currentTimeMillis()).coerceAtLeast(0)
-                      paused -> pausedRemaining
-                      else -> (endTime - System.currentTimeMillis()).coerceAtLeast(0)
-                  }
-                  val title = when {
-                      waiting -> "等待下一阶段 · ${formatMs(r)}"
-                      paused -> "已暂停 · ${st?.name ?: ""}"
-                      st != null -> "${st.name} · ${formatMs(r)}"
-                      else -> "计时"
-                  }
+                  val r = when { waiting -> (nextStartAtMs - System.currentTimeMillis()).coerceAtLeast(0); paused -> pausedRemaining; else -> (endTime - System.currentTimeMillis()).coerceAtLeast(0) }
+                  val title = when { waiting -> "等待下一阶段 · ${formatMs(r)}"; paused -> "已暂停 · ${st?.name ?: ""}"; st != null -> "${st.name} · ${formatMs(r)}"; else -> "计时" }
                   val stageTasks = tasksForStage(st?.key() ?: "")
-                  val text = if (stageTasks.isNotEmpty())
-                      "第 ${index + 1}/${stages.size} 段 · 任务：${stageTasks.joinToString("；") { it.title }}"
-                  else "第 ${index + 1}/${stages.size} 段 · ${formatMs(r)}"
+                  val text = if (stageTasks.isNotEmpty()) "第 ${index + 1}/${stages.size} 段 · 任务：${stageTasks.joinToString("；") { it.title }}"
+                             else "第 ${index + 1}/${stages.size} 段 · ${formatMs(r)}"
                   return NotificationCompat.Builder(this, CH)
-                      .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-                      .setContentTitle(title).setContentText(text)
-                      .setContentIntent(contentPi())
-                      .setOngoing(true).setOnlyAlertOnce(true).setSilent(true)
-                      .setPriority(NotificationCompat.PRIORITY_LOW)
-                      .setCategory(NotificationCompat.CATEGORY_STOPWATCH).build()
+                      .setSmallIcon(android.R.drawable.ic_lock_idle_alarm).setContentTitle(title).setContentText(text)
+                      .setContentIntent(contentPi()).setOngoing(true).setOnlyAlertOnce(true).setSilent(true)
+                      .setPriority(NotificationCompat.PRIORITY_LOW).setCategory(NotificationCompat.CATEGORY_STOPWATCH).build()
               }
           }
           TS_EOF
@@ -1092,11 +990,11 @@ jobs:
               LaunchedEffect(Unit) {
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
               }
-              Scaffold(
-                  topBar = { TopAppBar(title = { Text("循环提醒") }, colors = TopAppBarDefaults.topAppBarColors(
+              Scaffold(topBar = {
+                  TopAppBar(title = { Text("循环提醒") }, colors = TopAppBarDefaults.topAppBarColors(
                       containerColor = MaterialTheme.colorScheme.primaryContainer,
-                      titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer)) }
-              ) { pad ->
+                      titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer))
+              }) { pad ->
                   Column(Modifier.fillMaxSize().padding(pad)) {
                       TabRow(selectedTabIndex = tab) {
                           Tab(tab == 0, { tab = 0 }, text = { Text("计时") })
@@ -1108,21 +1006,12 @@ jobs:
               }
           }
 
-          // ==================================================================== 紧凑输入组件
-
           @Composable
-          fun CompactTextField(
-              value: String,
-              onValueChange: (String) -> Unit,
-              modifier: Modifier = Modifier,
-              enabled: Boolean = true,
-              placeholder: String = "",
-              keyboardType: KeyboardType = KeyboardType.Text,
-              textStyle: TextStyle = MaterialTheme.typography.bodyMedium
-          ) {
+          fun CompactTextField(value: String, onValueChange: (String) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true,
+                               placeholder: String = "", keyboardType: KeyboardType = KeyboardType.Text,
+                               textStyle: TextStyle = MaterialTheme.typography.bodyMedium) {
               BasicTextField(
-                  value = value,
-                  onValueChange = onValueChange,
+                  value = value, onValueChange = onValueChange,
                   modifier = modifier
                       .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
                       .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
@@ -1134,8 +1023,7 @@ jobs:
                   decorationBox = { inner ->
                       Box(contentAlignment = Alignment.CenterStart) {
                           if (value.isEmpty() && placeholder.isNotEmpty()) {
-                              Text(placeholder, style = MaterialTheme.typography.bodySmall,
-                                  color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                              Text(placeholder, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                           }
                           inner()
                       }
@@ -1144,17 +1032,10 @@ jobs:
           }
 
           @Composable
-          fun CompactTextArea(
-              value: String,
-              onValueChange: (String) -> Unit,
-              modifier: Modifier = Modifier,
-              enabled: Boolean = true,
-              placeholder: String = "",
-              minLines: Int = 3
-          ) {
+          fun CompactTextArea(value: String, onValueChange: (String) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true,
+                              placeholder: String = "", minLines: Int = 3) {
               BasicTextField(
-                  value = value,
-                  onValueChange = onValueChange,
+                  value = value, onValueChange = onValueChange,
                   modifier = modifier
                       .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
                       .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
@@ -1166,8 +1047,7 @@ jobs:
                   decorationBox = { inner ->
                       Box {
                           if (value.isEmpty() && placeholder.isNotEmpty()) {
-                              Text(placeholder, style = MaterialTheme.typography.bodySmall,
-                                  color = MaterialTheme.colorScheme.onSurfaceVariant)
+                              Text(placeholder, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                           }
                           inner()
                       }
@@ -1181,12 +1061,9 @@ jobs:
               val h = parts.getOrNull(0) ?: ""
               val m = parts.getOrNull(1) ?: ""
               Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                  CompactTextField(h, { v -> onChange("${v.filter { it.isDigit() }.take(2)}:$m") },
-                      Modifier.width(40.dp), enabled, "HH", KeyboardType.Number)
-                  Text(":", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold,
-                      color = MaterialTheme.colorScheme.primary)
-                  CompactTextField(m, { v -> onChange("$h:${v.filter { it.isDigit() }.take(2)}") },
-                      Modifier.width(40.dp), enabled, "MM", KeyboardType.Number)
+                  CompactTextField(h, { v -> onChange("${v.filter { it.isDigit() }.take(2)}:$m") }, Modifier.width(40.dp), enabled, "HH", KeyboardType.Number)
+                  Text(":", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                  CompactTextField(m, { v -> onChange("$h:${v.filter { it.isDigit() }.take(2)}") }, Modifier.width(40.dp), enabled, "MM", KeyboardType.Number)
               }
           }
 
@@ -1197,14 +1074,11 @@ jobs:
               val m = parts.getOrNull(1) ?: ""
               val d = parts.getOrNull(2) ?: ""
               Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                  CompactTextField(y, { v -> onChange("${v.filter { it.isDigit() }.take(4)}-$m-$d") },
-                      Modifier.width(56.dp), enabled, "YYYY", KeyboardType.Number)
+                  CompactTextField(y, { v -> onChange("${v.filter { it.isDigit() }.take(4)}-$m-$d") }, Modifier.width(56.dp), enabled, "YYYY", KeyboardType.Number)
                   Text("-", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                  CompactTextField(m, { v -> onChange("$y-${v.filter { it.isDigit() }.take(2)}-$d") },
-                      Modifier.width(38.dp), enabled, "MM", KeyboardType.Number)
+                  CompactTextField(m, { v -> onChange("$y-${v.filter { it.isDigit() }.take(2)}-$d") }, Modifier.width(38.dp), enabled, "MM", KeyboardType.Number)
                   Text("-", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                  CompactTextField(d, { v -> onChange("$y-$m-${v.filter { it.isDigit() }.take(2)}") },
-                      Modifier.width(38.dp), enabled, "DD", KeyboardType.Number)
+                  CompactTextField(d, { v -> onChange("$y-$m-${v.filter { it.isDigit() }.take(2)}") }, Modifier.width(38.dp), enabled, "DD", KeyboardType.Number)
               }
           }
 
@@ -1213,14 +1087,14 @@ jobs:
               var text by remember { mutableStateOf(value.toString()) }
               LaunchedEffect(value) { if (value.toString() != text) text = value.toString() }
               Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+                  SmallStepBtn("-5", enabled && value > min) { onChange((value - 5).coerceAtLeast(min)) }
+                  SmallStepBtn("-1", enabled && value > min) { onChange((value - 1).coerceAtLeast(min)) }
                   CompactTextField(text, { input ->
                       val v = input.filter { it.isDigit() }.take(3)
                       text = v
                       v.toIntOrNull()?.let { onChange(it.coerceIn(min, max)) }
-                  }, Modifier.width(42.dp), enabled, "", KeyboardType.Number)
+                  }, Modifier.width(44.dp), enabled, "", KeyboardType.Number)
                   Text("分", style = MaterialTheme.typography.bodySmall)
-                  SmallStepBtn("-5", enabled && value > min) { onChange((value - 5).coerceAtLeast(min)) }
-                  SmallStepBtn("-1", enabled && value > min) { onChange((value - 1).coerceAtLeast(min)) }
                   SmallStepBtn("+1", enabled && value < max) { onChange((value + 1).coerceAtMost(max)) }
                   SmallStepBtn("+5", enabled && value < max) { onChange((value + 5).coerceAtMost(max)) }
               }
@@ -1235,14 +1109,11 @@ jobs:
               }
           }
 
-          // ==================================================================== 计时
-
           @Composable
           fun TimerTab() {
               val ctx = LocalContext.current
               val ui by TimerService.state.collectAsState()
               val running = ui.running
-
               var mode by remember { mutableIntStateOf(Store.loadMode(ctx)) }
               var loopStages by remember { mutableStateOf(Store.loadLoopStages(ctx)) }
               var formStages by remember { mutableStateOf(Store.loadStages(ctx)) }
@@ -1257,12 +1128,7 @@ jobs:
 
               val currentList = when (mode) { 0 -> loopStages; 1 -> listOf(Stage("自由", freeMinutes)); else -> formStages }
               val previewMs = (currentList.firstOrNull()?.minutes ?: 0) * 60_000L
-              val title = when {
-                  running -> if (ui.waiting) "等待下一阶段" else ui.stageName.ifBlank { "计时中" }
-                  mode == 0 -> "循环模式"
-                  mode == 1 -> "自由时间"
-                  else -> "表单循环"
-              }
+              val title = when { running -> if (ui.waiting) "等待下一阶段" else ui.stageName.ifBlank { "计时中" }; mode == 0 -> "循环模式"; mode == 1 -> "自由时间"; else -> "表单循环" }
               val subtitle = when {
                   ui.waiting -> "下一阶段：${ui.nextStageName}（${formatMs(ui.remainingMs)}后）"
                   !running -> when (mode) {
@@ -1274,21 +1140,15 @@ jobs:
                   else -> "第 ${ui.stageIndex + 1} / ${ui.stageCount} 段"
               }
 
-              LazyColumn(Modifier.fillMaxSize(),
-                  contentPadding = PaddingValues(12.dp),
-                  horizontalAlignment = Alignment.CenterHorizontally,
-                  verticalArrangement = Arrangement.spacedBy(8.dp)) {
+              LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                   item { TimerRing(ui, previewMs, title, subtitle) }
                   item {
                       Column(horizontalAlignment = Alignment.CenterHorizontally) {
                           if (!running) {
                               Button(
                                   onClick = {
-                                      val list = when (mode) {
-                                          0 -> loopStages
-                                          1 -> listOf(Stage("自由计时", freeMinutes))
-                                          else -> formStages
-                                      }
+                                      val list = when (mode) { 0 -> loopStages; 1 -> listOf(Stage("自由计时", freeMinutes)); else -> formStages }
                                       if (list.isNotEmpty()) TimerService.start(ctx, list, loopEnabled)
                                   },
                                   enabled = currentList.isNotEmpty() && currentList.all { it.minutes > 0 },
@@ -1299,8 +1159,7 @@ jobs:
                                   if (ui.paused && !ui.waiting) Button({ TimerService.resume(ctx) }) { Text("继续") }
                                   else if (!ui.waiting) Button({ TimerService.pause(ctx) }) { Text("暂停") }
                                   OutlinedButton({ TimerService.skip(ctx) }) { Text("跳过") }
-                                  OutlinedButton({ TimerService.stop(ctx) },
-                                      colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("停止") }
+                                  OutlinedButton({ TimerService.stop(ctx) }, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("停止") }
                               }
                           }
                           if (ui.ringing) {
@@ -1311,20 +1170,13 @@ jobs:
                           }
                       }
                   }
-
                   item {
                       Card(Modifier.fillMaxWidth()) {
                           Column(Modifier.padding(10.dp)) {
                               Text("提醒方式", style = MaterialTheme.typography.titleSmall)
-                              Row(verticalAlignment = Alignment.CenterVertically) {
-                                  Text("响铃", Modifier.weight(1f)); Switch(soundOn, { soundOn = it; Store.saveSound(ctx, it) })
-                              }
-                              Row(verticalAlignment = Alignment.CenterVertically) {
-                                  Text("通知", Modifier.weight(1f)); Switch(notificationOn, { notificationOn = it; Store.saveNotification(ctx, it) })
-                              }
-                              Row(verticalAlignment = Alignment.CenterVertically) {
-                                  Text("震动", Modifier.weight(1f)); Switch(vibrateOn, { vibrateOn = it; Store.saveVibrate(ctx, it) })
-                              }
+                              Row(verticalAlignment = Alignment.CenterVertically) { Text("响铃", Modifier.weight(1f)); Switch(soundOn, { soundOn = it; Store.saveSound(ctx, it) }) }
+                              Row(verticalAlignment = Alignment.CenterVertically) { Text("通知", Modifier.weight(1f)); Switch(notificationOn, { notificationOn = it; Store.saveNotification(ctx, it) }) }
+                              Row(verticalAlignment = Alignment.CenterVertically) { Text("震动", Modifier.weight(1f)); Switch(vibrateOn, { vibrateOn = it; Store.saveVibrate(ctx, it) }) }
                               Spacer(Modifier.height(4.dp))
                               Text("铃声类型", style = MaterialTheme.typography.bodySmall)
                               Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1341,13 +1193,11 @@ jobs:
                                       s.toIntOrNull()?.let { Store.saveRingDuration(ctx, it) }
                                   }, Modifier.width(56.dp), true, "秒", KeyboardType.Number)
                                   Spacer(Modifier.width(6.dp))
-                                  Text("秒 (0=一直响)", style = MaterialTheme.typography.bodySmall,
-                                      color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                  Text("秒 (0=一直响)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                               }
                           }
                       }
                   }
-
                   item {
                       Column(Modifier.fillMaxWidth()) {
                           Text("模式", style = MaterialTheme.typography.titleSmall)
@@ -1358,32 +1208,23 @@ jobs:
                           }
                       }
                   }
-
                   when (mode) {
                       0 -> {
                           item {
                               Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                   Text("循环阶段 (${loopStages.size})", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                                  TextButton(
-                                      onClick = { loopStages = loopStages + Stage("阶段${loopStages.size + 1}", 5); Store.saveLoopStages(ctx, loopStages) },
-                                      enabled = !running && loopStages.size < 30
-                                  ) { Text("+ 添加") }
+                                  TextButton(onClick = { loopStages = loopStages + Stage("阶段${loopStages.size + 1}", 5); Store.saveLoopStages(ctx, loopStages) },
+                                      enabled = !running && loopStages.size < 30) { Text("+ 添加") }
                               }
                           }
                           itemsIndexed(loopStages, key = { i, _ -> "ls-$i" }) { i, st ->
                               LoopStageRow(st, !running,
                                   onChange = { u -> loopStages = loopStages.toMutableList().also { it[i] = u }; Store.saveLoopStages(ctx, loopStages) },
-                                  onDelete = {
-                                      if (loopStages.size > 1) {
-                                          loopStages = loopStages.toMutableList().also { it.removeAt(i) }
-                                          Store.saveLoopStages(ctx, loopStages)
-                                      }
-                                  })
+                                  onDelete = { if (loopStages.size > 1) { loopStages = loopStages.toMutableList().also { it.removeAt(i) }; Store.saveLoopStages(ctx, loopStages) } })
                           }
                           item {
                               Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                  Text("结束后重新开始", Modifier.weight(1f))
-                                  Switch(loopEnabled, { loopEnabled = it; Store.saveLoop(ctx, it) }, enabled = !running)
+                                  Text("结束后重新开始", Modifier.weight(1f)); Switch(loopEnabled, { loopEnabled = it; Store.saveLoop(ctx, it) }, enabled = !running)
                               }
                           }
                       }
@@ -1396,13 +1237,12 @@ jobs:
                                   Spacer(Modifier.height(6.dp))
                                   Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                       listOf(5, 10, 25, 45, 60).forEach { m ->
-                                          AssistChip({ freeMinutes = m; Store.saveFree(ctx, m) }, label = { Text("$m分") }, enabled = !running)
+                                          AssistChip({ freeMinutes = m; Store.saveFree(ctx, m) }, label = { Text("${m}分") }, enabled = !running)
                                       }
                                   }
                                   Spacer(Modifier.height(6.dp))
                                   Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                      Text("结束后重新开始", Modifier.weight(1f))
-                                      Switch(loopEnabled, { loopEnabled = it; Store.saveLoop(ctx, it) }, enabled = !running)
+                                      Text("结束后重新开始", Modifier.weight(1f)); Switch(loopEnabled, { loopEnabled = it; Store.saveLoop(ctx, it) }, enabled = !running)
                                   }
                               }
                           }
@@ -1411,14 +1251,10 @@ jobs:
                           item {
                               Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                   Text("表单阶段 (${formStages.size})", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                                  TextButton(
-                                      onClick = { formStages = formStages + Stage("阶段${formStages.size + 1}", 10, -1); Store.saveStages(ctx, formStages) },
-                                      enabled = !running && formStages.size < 50
-                                  ) { Text("+ 手动添加") }
-                                  TextButton(
-                                      onClick = { formStages = emptyList(); Store.saveStages(ctx, formStages) },
-                                      enabled = !running && formStages.isNotEmpty()
-                                  ) { Text("清空", color = MaterialTheme.colorScheme.error) }
+                                  TextButton(onClick = { formStages = formStages + Stage("阶段${formStages.size + 1}", 10, -1); Store.saveStages(ctx, formStages) },
+                                      enabled = !running && formStages.size < 50) { Text("+ 手动添加") }
+                                  TextButton(onClick = { formStages = emptyList(); Store.saveStages(ctx, formStages) },
+                                      enabled = !running && formStages.isNotEmpty()) { Text("清空", color = MaterialTheme.colorScheme.error) }
                               }
                           }
                           itemsIndexed(formStages, key = { i, _ -> "fs-$i" }) { i, st ->
@@ -1426,20 +1262,13 @@ jobs:
                                   onChange = { u -> formStages = formStages.toMutableList().also { it[i] = u }; Store.saveStages(ctx, formStages) },
                                   onDelete = { formStages = formStages.toMutableList().also { it.removeAt(i) }; Store.saveStages(ctx, formStages) })
                           }
-                          item {
-                              GeneratePanel(
-                                  formStages = formStages,
-                                  loopStages = loopStages,
-                                  running = running,
-                                  onGenerate = { s, e, template ->
-                                      val gen = fillSchedule(s, e, template)
-                                      formStages = mergeStages(formStages, gen)
-                                      Store.saveStages(ctx, formStages)
-                                      Store.saveLastTemplate(ctx, template)
-                                      if (scheduleEnabled) ScheduleReceiver.scheduleNext(ctx)
-                                  }
-                              )
-                          }
+                          item { GeneratePanel(formStages = formStages, loopStages = loopStages, running = running, onGenerate = { s, e, template ->
+                              val gen = fillSchedule(s, e, template)
+                              formStages = mergeStages(formStages, gen)
+                              Store.saveStages(ctx, formStages)
+                              Store.saveLastTemplate(ctx, template)
+                              if (scheduleEnabled) ScheduleReceiver.scheduleNext(ctx)
+                          }) }
                           item {
                               Card(Modifier.fillMaxWidth()) {
                                   Column(Modifier.padding(10.dp)) {
@@ -1452,13 +1281,9 @@ jobs:
                                       }
                                       if (scheduleEnabled) {
                                           val timed = formStages.filter { it.startMin >= 0 }
-                                          if (timed.isNotEmpty()) {
-                                              Text("每天 ${formatHm(timed.minOf { it.startMin })} → ${formatHm(timed.maxOf { it.startMin + it.minutes })}",
-                                                  style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                                          } else {
-                                              Text("表单中还没有带时间段的阶段", style = MaterialTheme.typography.bodySmall,
-                                                  color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                          }
+                                          if (timed.isNotEmpty()) Text("每天 ${formatHm(timed.minOf { it.startMin })} → ${formatHm(timed.maxOf { it.startMin + it.minutes })}",
+                                              style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                          else Text("表单中还没有带时间段的阶段", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                       }
                                   }
                               }
@@ -1474,15 +1299,12 @@ jobs:
               val totalMs = if (ui.running) ui.stageDurationMs.coerceAtLeast(1) else previewMs
               val progress = if (totalMs > 0) (displayMs.toFloat() / totalMs).coerceIn(0f, 1f) else 0f
               Box(Modifier.size(200.dp), contentAlignment = Alignment.Center) {
-                  CircularProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxSize(),
-                      strokeWidth = 10.dp, strokeCap = StrokeCap.Round,
-                      trackColor = MaterialTheme.colorScheme.surfaceVariant)
+                  CircularProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxSize(), strokeWidth = 10.dp, strokeCap = StrokeCap.Round, trackColor = MaterialTheme.colorScheme.surfaceVariant)
                   Column(horizontalAlignment = Alignment.CenterHorizontally) {
                       Text(formatMs(displayMs), fontSize = 38.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                       Spacer(Modifier.height(4.dp))
                       Text(title, style = MaterialTheme.typography.titleMedium)
-                      Text(subtitle, style = MaterialTheme.typography.bodySmall,
-                          color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                      Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                   }
               }
           }
@@ -1496,8 +1318,7 @@ jobs:
                   val tpl = template[i % template.size]
                   val dur = minOf(tpl.minutes, endMin - cur)
                   out += Stage(tpl.name, dur, cur)
-                  cur += dur
-                  i++
+                  cur += dur; i++
               }
               return out
           }
@@ -1515,11 +1336,8 @@ jobs:
               Card(Modifier.fillMaxWidth()) {
                   Column(Modifier.padding(8.dp)) {
                       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                          CompactTextField(stage.name, { onChange(stage.copy(name = it)) },
-                              Modifier.weight(1f), enabled, "名称")
-                          IconButton(onDelete, enabled = enabled, modifier = Modifier.size(32.dp)) {
-                              Icon(Icons.Default.Delete, contentDescription = "删", modifier = Modifier.size(18.dp))
-                          }
+                          CompactTextField(stage.name, { onChange(stage.copy(name = it)) }, Modifier.weight(1f), enabled, "名称")
+                          IconButton(onDelete, enabled = enabled, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Delete, contentDescription = "删", modifier = Modifier.size(18.dp)) }
                       }
                       Spacer(Modifier.height(4.dp))
                       DurationInput(stage.minutes, enabled, { onChange(stage.copy(minutes = it)) })
@@ -1534,27 +1352,18 @@ jobs:
                       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                           Text(if (stage.startMin >= 0) "${formatHm(stage.startMin)} → ${formatHm(stage.startMin + stage.minutes)}" else "无时间",
                               Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                          IconButton(onDelete, enabled = enabled, modifier = Modifier.size(32.dp)) {
-                              Icon(Icons.Default.Delete, contentDescription = "删", modifier = Modifier.size(18.dp))
-                          }
+                          IconButton(onDelete, enabled = enabled, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Delete, contentDescription = "删", modifier = Modifier.size(18.dp)) }
                       }
-                      CompactTextField(stage.name, { onChange(stage.copy(name = it)) },
-                          Modifier.fillMaxWidth(), enabled, "名称")
+                      CompactTextField(stage.name, { onChange(stage.copy(name = it)) }, Modifier.fillMaxWidth(), enabled, "名称")
                       Spacer(Modifier.height(4.dp))
                       DurationInput(stage.minutes, enabled, { onChange(stage.copy(minutes = it)) })
                   }
               }
           }
 
-          // ==================================================================== 生成面板
-
           @Composable
-          fun GeneratePanel(
-              formStages: List<Stage>,
-              loopStages: List<Stage>,
-              running: Boolean,
-              onGenerate: (start: Int, end: Int, template: List<Stage>) -> Unit
-          ) {
+          fun GeneratePanel(formStages: List<Stage>, loopStages: List<Stage>, running: Boolean,
+                            onGenerate: (start: Int, end: Int, template: List<Stage>) -> Unit) {
               val ctx = LocalContext.current
               var source by remember { mutableIntStateOf(0) }
               var startText by remember { mutableStateOf("") }
@@ -1577,30 +1386,22 @@ jobs:
                           FilterChip(source == 1, { source = 1 }, label = { Text("上次表单") }, enabled = !running)
                           FilterChip(source == 2, { source = 2 }, label = { Text("自定义") }, enabled = !running)
                       }
-
                       Spacer(Modifier.height(6.dp))
-                      // 开始时间：标签在左，输入框居中
                       Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                           Text("开始", Modifier.width(40.dp), style = MaterialTheme.typography.bodyMedium)
-                          Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                              FixedTimeField(startText, { startText = it }, !running)
-                          }
+                          Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { FixedTimeField(startText, { startText = it }, !running) }
                           Spacer(Modifier.width(40.dp))
                       }
                       Spacer(Modifier.height(4.dp))
                       Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                           Text("结束", Modifier.width(40.dp), style = MaterialTheme.typography.bodyMedium)
-                          Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                              FixedTimeField(endText, { endText = it }, !running)
-                          }
+                          Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { FixedTimeField(endText, { endText = it }, !running) }
                           Spacer(Modifier.width(40.dp))
                       }
-
                       Spacer(Modifier.height(6.dp))
                       when (source) {
                           0 -> if (loopStages.isEmpty()) {
-                              Text("循环模式还没有阶段", style = MaterialTheme.typography.bodySmall,
-                                  color = MaterialTheme.colorScheme.onSurfaceVariant)
+                              Text("循环模式还没有阶段", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                           } else {
                               Text("模板：${loopStages.joinToString(" → ") { "${it.name}${it.minutes}分" }}",
                                   style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
@@ -1608,8 +1409,7 @@ jobs:
                           1 -> {
                               val lt = Store.loadLastTemplate(ctx)
                               if (lt.isEmpty() && formStages.isEmpty()) {
-                                  Text("还没有可用的模板", style = MaterialTheme.typography.bodySmall,
-                                      color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                  Text("还没有可用的模板", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                               } else {
                                   val use = if (lt.isNotEmpty()) lt else formStages.map { Stage(it.name, it.minutes) }.distinctBy { it.name }
                                   Text("模板：${use.joinToString(" → ") { "${it.name}${it.minutes}分" }}",
@@ -1619,13 +1419,13 @@ jobs:
                           else -> {
                               Text("自定义阶段模板（按顺序循环填充）", style = MaterialTheme.typography.bodySmall)
                               customTemplates.forEachIndexed { i, st ->
-                                  Row(verticalAlignment = Alignment.CenterVertically,
-                                      horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                      CompactTextField(st.name,
-                                          { v -> customTemplates = customTemplates.toMutableList().also { it[i] = st.copy(name = v) } },
-                                          Modifier.weight(1f), !running, "名称")
-                                      DurationInput(st.minutes, !running,
-                                          { customTemplates = customTemplates.toMutableList().also { it[i] = st.copy(minutes = it) } })
+                                  Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                      CompactTextField(st.name, { v ->
+                                          customTemplates = customTemplates.toMutableList().also { list -> list[i] = st.copy(name = v) }
+                                      }, Modifier.weight(1f), !running, "名称")
+                                      DurationInput(st.minutes, !running, { newMin ->
+                                          customTemplates = customTemplates.toMutableList().also { list -> list[i] = st.copy(minutes = newMin) }
+                                      })
                                       IconButton({
                                           if (customTemplates.size > 1) customTemplates = customTemplates.toMutableList().also { it.removeAt(i) }
                                       }, enabled = !running, modifier = Modifier.size(32.dp)) {
@@ -1633,12 +1433,10 @@ jobs:
                                       }
                                   }
                               }
-                              TextButton({
-                                  customTemplates = customTemplates + Stage("阶段${customTemplates.size + 1}", 10)
-                              }, enabled = !running && customTemplates.size < 10) { Text("+ 添加阶段") }
+                              TextButton({ customTemplates = customTemplates + Stage("阶段${customTemplates.size + 1}", 10) },
+                                  enabled = !running && customTemplates.size < 10) { Text("+ 添加阶段") }
                           }
                       }
-
                       Spacer(Modifier.height(6.dp))
                       Button(
                           onClick = {
@@ -1654,8 +1452,6 @@ jobs:
                   }
               }
           }
-
-          // ==================================================================== 待办
 
           @Composable
           fun TodoTab() {
@@ -1686,28 +1482,21 @@ jobs:
                                   verticalAlignment = Alignment.CenterVertically) {
                                   Checkbox(task.done, { c -> update(tasks.map { if (it.id == task.id) it.copy(done = c) else it }) })
                                   Column(Modifier.weight(1f).clickable { editing = task }) {
-                                      Text(task.title,
-                                          textDecoration = if (task.done) TextDecoration.LineThrough else null,
+                                      Text(task.title, textDecoration = if (task.done) TextDecoration.LineThrough else null,
                                           color = if (task.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
                                       if (task.remindAt > 0) {
                                           val dt = java.time.Instant.ofEpochMilli(task.remindAt).atZone(ZoneId.systemDefault()).toLocalDateTime()
                                           Text("⏰ " + dt.format(DateTimeFormatter.ofPattern("MM-dd HH:mm")),
                                               style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                                       }
-                                      if (task.stageKey.isNotBlank()) {
-                                          Text("🕒 " + task.stageKey, style = MaterialTheme.typography.bodySmall,
-                                              color = MaterialTheme.colorScheme.tertiary)
-                                      }
+                                      if (task.stageKey.isNotBlank()) Text("🕒 " + task.stageKey, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
                                       if (task.note.isNotBlank()) Text(task.note, style = MaterialTheme.typography.bodySmall, maxLines = 2)
                                   }
                                   IconButton({ editing = task }) {
                                       Icon(Icons.Default.Notifications, contentDescription = "编辑",
-                                          tint = if (task.remindAt > 0 || task.stageKey.isNotBlank()) MaterialTheme.colorScheme.primary
-                                                 else MaterialTheme.colorScheme.onSurfaceVariant)
+                                          tint = if (task.remindAt > 0 || task.stageKey.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                                   }
-                                  IconButton({ update(tasks.filterNot { it.id == task.id }) }) {
-                                      Icon(Icons.Default.Close, contentDescription = "删")
-                                  }
+                                  IconButton({ update(tasks.filterNot { it.id == task.id }) }) { Icon(Icons.Default.Close, contentDescription = "删") }
                               }
                           }
                       }
@@ -1732,12 +1521,8 @@ jobs:
               var title by remember { mutableStateOf(task.title) }
               var note by remember { mutableStateOf(task.note) }
               var stageKey by remember { mutableStateOf(task.stageKey) }
-              val initDate = if (task.remindAt > 0) {
-                  java.time.Instant.ofEpochMilli(task.remindAt).atZone(ZoneId.systemDefault()).toLocalDate()
-              } else LocalDate.now()
-              val initTime = if (task.remindAt > 0) {
-                  java.time.Instant.ofEpochMilli(task.remindAt).atZone(ZoneId.systemDefault()).toLocalTime()
-              } else LocalTime.of(9, 0)
+              val initDate = if (task.remindAt > 0) java.time.Instant.ofEpochMilli(task.remindAt).atZone(ZoneId.systemDefault()).toLocalDate() else LocalDate.now()
+              val initTime = if (task.remindAt > 0) java.time.Instant.ofEpochMilli(task.remindAt).atZone(ZoneId.systemDefault()).toLocalTime() else LocalTime.of(9, 0)
               var dateText by remember { mutableStateOf(initDate.toString()) }
               var timeText by remember { mutableStateOf(initTime.format(DateTimeFormatter.ofPattern("HH:mm"))) }
               var error by remember { mutableStateOf("") }
@@ -1754,21 +1539,15 @@ jobs:
                           CompactTextArea(note, { note = it }, Modifier.fillMaxWidth(), true, "备注（3行）", minLines = 3)
                           Spacer(Modifier.height(8.dp))
                           Text("提醒日期", style = MaterialTheme.typography.bodySmall)
-                          Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-                              FixedDateField(dateText, { dateText = it })
-                          }
+                          Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) { FixedDateField(dateText, { dateText = it }) }
                           Spacer(Modifier.height(6.dp))
                           Text("提醒时间", style = MaterialTheme.typography.bodySmall)
-                          Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-                              FixedTimeField(timeText, { timeText = it })
-                          }
+                          Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) { FixedTimeField(timeText, { timeText = it }) }
                           if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                           Spacer(Modifier.height(8.dp))
                           Text("关联阶段（下拉）", style = MaterialTheme.typography.bodySmall)
-                          if (stages.isEmpty()) {
-                              Text("请先在计时 Tab 创建阶段", style = MaterialTheme.typography.bodySmall,
-                                  color = MaterialTheme.colorScheme.onSurfaceVariant)
-                          } else StageDropdown(stages, stageKey) { stageKey = it }
+                          if (stages.isEmpty()) Text("请先在计时 Tab 创建阶段", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                          else StageDropdown(stages, stageKey) { stageKey = it }
                       }
                   },
                   confirmButton = {
@@ -1801,15 +1580,12 @@ jobs:
               }
               val currentLabel = options.firstOrNull { it.first == selected }?.second ?: "无"
               Box {
-                  OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth().height(36.dp),
-                      contentPadding = PaddingValues(horizontal = 10.dp)) {
+                  OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth().height(36.dp), contentPadding = PaddingValues(horizontal = 10.dp)) {
                       Text(currentLabel, Modifier.weight(1f), textAlign = TextAlign.Start, fontSize = 13.sp)
                       Text("▼", fontSize = 11.sp)
                   }
                   DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                      options.forEach { (key, label) ->
-                          DropdownMenuItem(text = { Text(label) }, onClick = { onSelect(key); expanded = false })
-                      }
+                      options.forEach { (key, label) -> DropdownMenuItem(text = { Text(label) }, onClick = { onSelect(key); expanded = false }) }
                   }
               }
           }
@@ -1827,8 +1603,6 @@ jobs:
                   } else am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, timeMs, pi)
               } catch (e: Exception) {}
           }
-
-          // ==================================================================== 日历
 
           @Composable
           fun CalendarTab() {
@@ -1858,9 +1632,7 @@ jobs:
                           val all = sectionExpanded.values.all { it }
                           sectionExpanded["day"] = !all; sectionExpanded["week"] = !all; sectionExpanded["month"] = !all
                       }) { Text(if (sectionExpanded.values.all { it }) "全部折叠" else "全部展开") }
-                      IconButton({ editing = Task(0L, "") }) {
-                          Icon(Icons.Default.Notifications, contentDescription = "添加")
-                      }
+                      IconButton({ editing = Task(0L, "") }) { Icon(Icons.Default.Notifications, contentDescription = "添加") }
                   }
                   Row(verticalAlignment = Alignment.CenterVertically) {
                       IconButton({ anchor = when (viewMode) { 0 -> anchor.minusDays(1); 1 -> anchor.minusWeeks(1); else -> anchor.minusMonths(1) } }) { Text("‹") }
@@ -1922,8 +1694,7 @@ jobs:
               val dayTasks = tasks.filter {
                   it.remindAt > 0 && java.time.Instant.ofEpochMilli(it.remindAt).atZone(ZoneId.systemDefault()).toLocalDate() == selected
               }
-              if (dayTasks.isEmpty()) Text("暂无事件", color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  modifier = Modifier.padding(vertical = 6.dp), style = MaterialTheme.typography.bodySmall)
+              if (dayTasks.isEmpty()) Text("暂无事件", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 6.dp), style = MaterialTheme.typography.bodySmall)
               else dayTasks.forEach { e ->
                   val t = java.time.Instant.ofEpochMilli(e.remindAt).atZone(ZoneId.systemDefault()).toLocalTime()
                   Card(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
@@ -1931,8 +1702,7 @@ jobs:
                           Text(t.format(DateTimeFormatter.ofPattern("HH:mm")), Modifier.widthIn(min = 52.dp),
                               fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
                           Text(e.title, modifier = Modifier.weight(1f), textDecoration = if (e.done) TextDecoration.LineThrough else null)
-                          if (e.stageKey.isNotBlank()) Text("🕒 " + e.stageKey, style = MaterialTheme.typography.bodySmall,
-                              color = MaterialTheme.colorScheme.tertiary)
+                          if (e.stageKey.isNotBlank()) Text("🕒 " + e.stageKey, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
                       }
                   }
               }
@@ -1984,8 +1754,7 @@ jobs:
                           val d = java.time.Instant.ofEpochMilli(it.remindAt).atZone(ZoneId.systemDefault()).toLocalDate()
                           !d.isBefore(weekStart) && !d.isAfter(weekEnd)
                       }.sortedBy { it.remindAt }
-                      if (weekTasks.isEmpty()) Text("本周暂无任务", color = MaterialTheme.colorScheme.onSurfaceVariant,
-                          style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
+                      if (weekTasks.isEmpty()) Text("本周暂无任务", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
                       else weekTasks.forEach { e ->
                           Card(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
                               Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2011,8 +1780,7 @@ jobs:
               Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                   Row(Modifier.fillMaxWidth()) {
                       listOf("一","二","三","四","五","六","日").forEach {
-                          Text(it, Modifier.weight(1f), textAlign = TextAlign.Center, fontSize = 11.sp,
-                              color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+                          Text(it, Modifier.weight(1f), textAlign = TextAlign.Center, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
                       }
                   }
                   for (r in 0 until rows) {
@@ -2026,30 +1794,16 @@ jobs:
                                   val isToday = d == LocalDate.now()
                                   val isRest = Lunar.workMark(d) == "休"
                                   val specialShort = Lunar.specialShort(d) ?: Lunar.lunarFestivalShort(Lunar.fromSolar(d))
-                                  val bg = when {
-                                      isSel -> MaterialTheme.colorScheme.primary
-                                      isToday -> MaterialTheme.colorScheme.primaryContainer
-                                      else -> MaterialTheme.colorScheme.surface
-                                  }
-                                  val numColor = when {
-                                      isSel -> MaterialTheme.colorScheme.onPrimary
-                                      isRest -> Color(0xFFD32F2F)
-                                      else -> MaterialTheme.colorScheme.onSurface
-                                  }
-                                  val hasEvent = tasks.any {
-                                      it.remindAt > 0 && java.time.Instant.ofEpochMilli(it.remindAt).atZone(ZoneId.systemDefault()).toLocalDate() == d
-                                  }
+                                  val bg = when { isSel -> MaterialTheme.colorScheme.primary; isToday -> MaterialTheme.colorScheme.primaryContainer; else -> MaterialTheme.colorScheme.surface }
+                                  val numColor = when { isSel -> MaterialTheme.colorScheme.onPrimary; isRest -> Color(0xFFD32F2F); else -> MaterialTheme.colorScheme.onSurface }
+                                  val hasEvent = tasks.any { it.remindAt > 0 && java.time.Instant.ofEpochMilli(it.remindAt).atZone(ZoneId.systemDefault()).toLocalDate() == d }
                                   Column(
-                                      Modifier.weight(1f).aspectRatio(0.9f).padding(1.dp)
-                                          .clip(RoundedCornerShape(5.dp)).background(bg).clickable { onSelect(d) }.padding(1.dp),
+                                      Modifier.weight(1f).aspectRatio(0.9f).padding(1.dp).clip(RoundedCornerShape(5.dp)).background(bg).clickable { onSelect(d) }.padding(1.dp),
                                       horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
                                   ) {
                                       Text("$dayNum", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = numColor)
                                       val sub = specialShort ?: Lunar.dayShortLabel(d)
-                                      val subColor = when {
-                                          specialShort != null && !isSel -> Color(0xFFD32F2F)
-                                          else -> if (isSel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                                      }
+                                      val subColor = when { specialShort != null && !isSel -> Color(0xFFD32F2F); else -> if (isSel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant }
                                       Text(sub, fontSize = 8.sp, color = subColor, maxLines = 1)
                                       if (hasEvent) Box(Modifier.size(3.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error))
                                   }
@@ -2068,8 +1822,7 @@ jobs:
                           val d = java.time.Instant.ofEpochMilli(it.remindAt).atZone(ZoneId.systemDefault()).toLocalDate()
                           !d.isBefore(monthStart) && !d.isAfter(monthEnd)
                       }.sortedBy { it.remindAt }
-                      if (monthTasks.isEmpty()) Text("本月暂无任务", color = MaterialTheme.colorScheme.onSurfaceVariant,
-                          style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
+                      if (monthTasks.isEmpty()) Text("本月暂无任务", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
                       else monthTasks.forEach { e ->
                           Card(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
                               Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
